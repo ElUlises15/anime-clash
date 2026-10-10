@@ -62,7 +62,7 @@ export class LobbyScene extends Phaser.Scene {
         this.choose = new ArcadeButton(this, 680, 910, 'ELEGIR LUCHADOR', () => goTo(this, SCENES.Select, { mode: 'online' }), { w: 540, size: 27 });
         const leave = new ArcadeButton(this, 1280, 910, 'SALIR', () => this.leave(), { w: 400, accent: 'magenta' });
         menu = new MenuController(this, [this.choose, link, code, leave], { onBack: () => this.leave() });
-        hintBar(this, 'W/S · ENTER / J confirmar · ESC / K salir');
+        hintBar(this, 'FLECHAS / WASD mover · ENTER / CLICK confirmar · ESC salir');
         const refreshUnsub = room.on(() => this.refresh());
         this.events.once('shutdown', refreshUnsub);
         this.detachOverlay = attachOnlineOverlay(this, room);

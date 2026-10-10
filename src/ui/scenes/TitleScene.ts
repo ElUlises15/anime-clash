@@ -33,7 +33,7 @@ export class TitleScene extends Phaser.Scene {
     this.drawLogo();
     this.buildMenus();
 
-    hintBar(this, 'W/S o flechas · ENTER / J / CLICK confirmar · ESC volver');
+    hintBar(this, 'FLECHAS / WASD mover · ENTER / ESPACIO / CLICK confirmar · ESC volver');
     arcadeText(this, 48, GAME_H - 36, 'LOCAL + ONLINE · P2P', 16, HEX.dim, { origin: [0, 0.5], stroke: 3 });
     arcadeText(this, GAME_W - 48, GAME_H - 36, '1v1 ARCADE FIGHTER', 16, HEX.dim, { origin: [1, 0.5], stroke: 3 });
 

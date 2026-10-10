@@ -73,7 +73,7 @@ export class PostMatchScene extends Phaser.Scene {
     this.drawStats(r);
     this.drawHistory(r);
     this.drawButtons(r);
-    hintBar(this, 'ENTER / J confirmar  ·  ESC volver');
+    hintBar(this, 'FLECHAS / WASD mover  ·  ENTER / CLICK confirmar  ·  ESC volver');
   }
 
   private drawFighter(
