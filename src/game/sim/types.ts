@@ -78,6 +78,14 @@ export interface FighterState {
   prevInput: InputBits;
   lastDirTap: number; // reserved
   stats: MatchStats;
+  // --- engine bookkeeping (additive, Phase 1 engine team) ---
+  bufInput: InputBits; // buffered button presses (+ directions held at press time); 0 = empty
+  bufAge: number; // frames since buffered press
+  juggle: number; // hits taken while airborne in the current juggle (reset on landing)
+  moveHits: number; // hits landed by the active move (multi-hit moves)
+  moveConnect: number; // 0 = active move hasn't connected, 1 = blocked, 2 = hit
+  knockdownOnLand: boolean; // airborne hitstun ends in knockdown on landing
+  lastHitFrame: number; // state.frame when last damaged (-1 never)
 }
 
 export type EntityKind = 'projectile' | 'beam' | 'summon' | 'trap' | 'aoe' | 'shield';
