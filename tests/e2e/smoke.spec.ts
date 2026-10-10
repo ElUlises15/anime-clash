@@ -69,7 +69,7 @@ test('training mode loads with dummy', async ({ page }) => {
   await page.keyboard.down('KeyD');
   await page.waitForTimeout(1500);
   await page.keyboard.up('KeyD');
-  for (let i = 0; i < 12; i++) await key(page, 'KeyJ');
+  for (let i = 0; i < 12; i++) await key(page, 'KeyQ');
   const s = await page.evaluate(() => (window as AcWindow).__ac!.getState());
   expect(s.phase).toBe('fight');
   expect(errors).toEqual([]);
