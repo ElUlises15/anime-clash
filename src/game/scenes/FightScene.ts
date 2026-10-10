@@ -82,6 +82,7 @@ export class FightScene extends Phaser.Scene {
   /** Test/tooling only: simulation speed multiplier (both peers must use the same value online). */
   private speed = 1;
   private spam = false;
+  private hudDirty = false;
   // ---- perf / liveness instrumentation
   private perfDelta = new Float32Array(PERF_SAMPLES);
   private perfCost = new Float32Array(PERF_SAMPLES);
@@ -335,6 +336,8 @@ export class FightScene extends Phaser.Scene {
     this.lastUpdateAt = t0;
     this.fpsSmooth = this.fpsSmooth * 0.95 + (1000 / Math.max(1, delta)) * 0.05;
     if ((!this.paused || this.net) && !this.ending) this.advance(delta);
+    // HUD text/bars once per rendered frame (it was per sim step: up to 4-48 Text re-rasterisations per frame).
+    if (this.hudDirty) { this.hudDirty = false; this.hudScene.updateHud(this.state, this.hudExtra()); }
     this.renderState(delta);
     const auth = this.net ? this.net.confirmedState : this.state;
     if (auth.phase === 'matchEnd' && !this.ending && auth.phaseFrame > 150) this.finishMatch();
@@ -354,9 +357,11 @@ export class FightScene extends Phaser.Scene {
     let steps = 0;
     const maxSteps = (stepCap ?? (online ? ONLINE_MAX_STEPS_PER_FRAME : MAX_STEPS_PER_FRAME)) * this.speed;
     while (this.acc >= STEP_MS && steps < maxSteps) {
-      this.stepOnce();
+      const advanced = this.stepOnce();
       this.acc -= STEP_MS;
       steps++;
+      // Online stall = remote is behind: more ticks this frame would only spam packets. Drop the debt (time sync).
+      if (!advanced) { this.acc = Math.min(this.acc, STEP_MS); break; }
     }
     if (steps === maxSteps) this.acc = online ? Math.min(this.acc, STEP_MS * maxSteps) : 0; // fell behind: bound the debt
   }
@@ -385,7 +390,7 @@ export class FightScene extends Phaser.Scene {
     return { frames: n, delta: pct(this.perfDelta), cost: pct(this.perfCost), hitches: over33 };
   }
 
-  private stepOnline(net: NetSession) {
+  private stepOnline(net: NetSession): boolean {
     const me = this.room!.snapshot.me;
     const keys = this.inputMgr.samplePair(['p1keys', 'p2keys'])[0];
     const bits = this.paused ? 0 : this.onlineAutoplay ? this.localBot!.next(net.state, me) : keys;
@@ -409,11 +414,13 @@ export class FightScene extends Phaser.Scene {
     const silent = net.isRemoteSilent(1000);
     if (silent && !this.silentShown) this.hudScene.toast('CONEXIÓN INESTABLE…');
     this.silentShown = silent;
-    this.hudScene.updateHud(this.state, this.hudExtra());
+    this.hudDirty = true;
+    return t.advanced;
   }
 
-  private stepOnce() {
-    if (this.net) { this.stepOnline(this.net); return; }
+  /** One fixed step. Returns false when the online session stalled (waiting for the remote / time sync). */
+  private stepOnce(): boolean {
+    if (this.net) return this.stepOnline(this.net);
     const inputs = this.gatherInputs();
     sim.step(this.state, inputs);
     this.stepsTotal++;
@@ -425,7 +432,8 @@ export class FightScene extends Phaser.Scene {
         this.trackTraining(ev);
       }
     }
-    this.hudScene.updateHud(this.state, this.hudExtra());
+    this.hudDirty = true;
+    return true;
   }
 
   private trackTraining(ev: SimEvent) {
