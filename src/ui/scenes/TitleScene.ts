@@ -7,6 +7,7 @@ import { playIntroWipe, goTo } from '../transitions';
 import { ArcadeButton, MenuController, arcadeText, hintBar } from '../widgets';
 import { onlineHandlers } from '../online';
 import { C, DEPTH, HEX } from '../theme';
+import { loadBusts } from '../../render/sprites/loader';
 
 export class TitleScene extends Phaser.Scene {
   private menu?: MenuController;
@@ -38,6 +39,7 @@ export class TitleScene extends Phaser.Scene {
     arcadeText(this, GAME_W - 48, GAME_H - 36, '1v1 ARCADE FIGHTER', 16, HEX.dim, { origin: [1, 0.5], stroke: 3 });
 
     markUi(SCENES.Title, this);
+    void loadBusts(this); // menu/HUD portraits for sprite characters
   }
 
   private drawDecor(): void {

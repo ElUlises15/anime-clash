@@ -4,6 +4,7 @@
  */
 import Phaser from 'phaser';
 import type { CharacterDef } from '../characters/types';
+import { spriteSetFor } from '../render/sprites/sets';
 
 interface PortraitMod {
   makePortraitTexture?: (scene: Phaser.Scene, def: CharacterDef, key: string, size: number) => string;
@@ -28,7 +29,28 @@ export async function loadPortraitModule(): Promise<void> {
   }
 }
 
+/** Bust image key for characters with AI sprites (only once loaded; see loadBusts). */
+export function bustKey(scene: Phaser.Scene, id: string): string | null {
+  const k = spriteSetFor(id)?.bust;
+  return k && scene.textures.exists(k) ? k : null;
+}
+
+/** Atlas frame for a full-body sprite pose (idle/victory/...) once the character's atlas is loaded. */
+export function spriteBody(scene: Phaser.Scene, id: string, frame: string): { key: string; frame: string; pivotX: number; h: number } | null {
+  const set = spriteSetFor(id);
+  if (!set || !scene.textures.exists(set.atlas)) return null;
+  const tex = scene.textures.get(set.atlas);
+  const name = tex.has(frame) ? frame : tex.has('idle') ? 'idle' : null;
+  if (!name) return null;
+  const f = tex.get(name);
+  const pivotX = (f.customData as { pivot?: { x: number } } | undefined)?.pivot?.x ?? 0.5;
+  return { key: set.atlas, frame: name, pivotX, h: f.realHeight };
+}
+
+/** Square portrait: the AI bust when available, else the procedural portrait. */
 export function makePortraitTexture(scene: Phaser.Scene, def: CharacterDef, key: string, size: number): string {
+  const bust = bustKey(scene, def.id);
+  if (bust) return bust;
   if (mod?.makePortraitTexture) {
     try {
       const k = mod.makePortraitTexture(scene, def, key, size);

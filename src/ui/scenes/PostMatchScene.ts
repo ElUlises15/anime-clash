@@ -12,7 +12,7 @@ import {
 } from '../widgets';
 import { C, HEX } from '../theme';
 import { getCharacter, loadRegistry, listCharacters } from '../roster';
-import { makeFullBodyTexture, loadPortraitModule } from '../portraitAdapter';
+import { makeFullBodyTexture, loadPortraitModule, spriteBody } from '../portraitAdapter';
 import type { CharacterDef } from '../../characters/types';
 import type { MatchStats, PlayerIndex } from '../../game/sim/types';
 
@@ -86,9 +86,15 @@ export class PostMatchScene extends Phaser.Scene {
     flip = false,
   ): void {
     if (def) {
-      const key = `post-body-${def.id}-${flip ? 'r' : 'l'}-${isWinner ? 'v' : 'l'}`;
-      const tex = makeFullBodyTexture(this, def, key, 380, isWinner ? 'victory' : 'idle');
-      const img = this.add.image(x, 430, tex);
+      const spr = spriteBody(this, def.id, isWinner ? 'victory' : 'idle');
+      let img: Phaser.GameObjects.Image;
+      if (spr) {
+        img = this.add.image(x, 632, spr.key, spr.frame).setOrigin(flip ? 1 - spr.pivotX : spr.pivotX, 1);
+        img.setScale(400 / spr.h);
+      } else {
+        const key = `post-body-${def.id}-${flip ? 'r' : 'l'}-${isWinner ? 'v' : 'l'}`;
+        img = this.add.image(x, 430, makeFullBodyTexture(this, def, key, 380, isWinner ? 'victory' : 'idle'));
+      }
       if (flip) img.setFlipX(true);
       if (dim) img.setAlpha(0.38).setTint(0x6688aa);
       if (isWinner) {

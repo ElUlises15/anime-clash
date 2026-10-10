@@ -11,7 +11,10 @@ import { playIntroWipe, goTo } from '../transitions';
 import { ArcadeButton, arcadeText, bodyText, fillPara, strokePara, hintBar, slantPanel } from '../widgets';
 import { C, DEPTH, HEX } from '../theme';
 import { listFranchises, loadRegistry, resetRegistryCache, type FranchiseGroup } from '../roster';
-import { makeFullBodyTexture, makePortraitTexture, loadPortraitModule } from '../portraitAdapter';
+import { makeFullBodyTexture, makePortraitTexture, loadPortraitModule, spriteBody } from '../portraitAdapter';
+import { ensureSpriteSet, loadBusts } from '../../render/sprites/loader';
+import { spriteSetFor } from '../../render/sprites/sets';
+import { BACK_KEYS, CONFIRM_KEYS } from '../focusNav';
 
 interface Cell {
   def: CharacterDef;
@@ -38,6 +41,7 @@ export class SelectScene extends Phaser.Scene {
   private launching = false;
   private waiting = false;
   private previewKey: [string, string] = ['', ''];
+  private requested = new Set<string>();
   private p1Name!: Phaser.GameObjects.Text;
   private p2Name!: Phaser.GameObjects.Text;
   private p1Meta!: Phaser.GameObjects.Text;
@@ -65,6 +69,7 @@ export class SelectScene extends Phaser.Scene {
     this.room = this.mode === 'online' ? getActiveRoom() ?? undefined : undefined;
     this.readyAt = null;
     this.previewKey = ['', ''];
+    this.requested.clear();
     this.p1Img = undefined; this.p2Img = undefined;
     if (this.mode === 'online' && !this.room) { goTo(this, SCENES.Title); return; }
     this.confirmed = [false, false];
@@ -112,7 +117,7 @@ export class SelectScene extends Phaser.Scene {
 
   private async bootRoster(): Promise<void> {
     this.waiting = true;
-    await loadPortraitModule();
+    await Promise.all([loadPortraitModule(), loadBusts(this)]);
     let groups = listFranchises();
     if (!groups.length) {
       resetRegistryCache();
@@ -212,7 +217,7 @@ export class SelectScene extends Phaser.Scene {
     const card = this.add.container(x, y);
     const frame = this.add.graphics();
     const key = makePortraitTexture(this, def, `sel-p-${def.id}`, 140);
-    const img = this.add.image(0, -28, key).setDisplaySize(132, 132);
+    const img = this.add.image(0, -28, key).setDisplaySize(140, 140);
     const name = arcadeText(this, 0, 58, def.name, 18, HEX.cream, { stroke: 4 });
     const arch = arcadeText(this, 0, 80, def.archetype, 12, HEX.cyan, { stroke: 3 });
     const stars = this.add.container(0, 100);
@@ -234,8 +239,8 @@ export class SelectScene extends Phaser.Scene {
       if (this.launching) return;
       const p = this.mousePlayer();
       if (p === null) return;
-      if (this.sameCell(p, row, col)) this.confirm(p);
-      else this.setCursor(p, row, col);
+      this.setCursor(p, row, col);
+      this.confirm(p);
     });
     this.paintCard(frame, w, h, false, false);
     return { def, row, col, x, y, card, frame };
@@ -258,6 +263,7 @@ export class SelectScene extends Phaser.Scene {
       if (this.room) {
         const me = this.room.snapshot.me;
         if (c === 'Escape') { this.room.returnToRoom(); goTo(this, SCENES.Lobby, { action: 'resume' }); }
+        else if (c === 'Backspace') this.back(me);
         else if (c === 'KeyA' || c === 'ArrowLeft') this.move(me, 0, -1);
         else if (c === 'KeyD' || c === 'ArrowRight') this.move(me, 0, 1);
         else if (c === 'KeyW' || c === 'ArrowUp') this.move(me, -1, 0);
@@ -266,7 +272,7 @@ export class SelectScene extends Phaser.Scene {
         else if (c === 'KeyK') this.back(me);
         return;
       }
-      if (c === 'Escape') {
+      if (c === 'Escape' || c === 'Backspace') {
         this.back(0);
         return;
       }
@@ -275,15 +281,22 @@ export class SelectScene extends Phaser.Scene {
       else if (c === 'KeyD') this.move(0, 0, 1);
       else if (c === 'KeyW') this.move(0, -1, 0);
       else if (c === 'KeyS') this.move(0, 1, 0);
-      else if (c === 'KeyJ' || c === 'Enter' || c === 'Space') this.confirm(0);
-      else if (c === 'KeyK') this.back(0);
+      else if (CONFIRM_KEYS.includes(c) && c !== 'NumpadEnter') this.confirm(0);
+      else if (BACK_KEYS.includes(c)) this.back(0);
+      // training: arrows also drive the (single) cursor
+      if (this.mode === 'training') {
+        if (c === 'ArrowLeft') this.move(0, 0, -1);
+        else if (c === 'ArrowRight') this.move(0, 0, 1);
+        else if (c === 'ArrowUp') this.move(0, -1, 0);
+        else if (c === 'ArrowDown') this.move(0, 1, 0);
+      }
 
       if (this.mode === 'versus') {
         if (c === 'ArrowLeft') this.move(1, 0, -1);
         else if (c === 'ArrowRight') this.move(1, 0, 1);
         else if (c === 'ArrowUp') this.move(1, -1, 0);
         else if (c === 'ArrowDown') this.move(1, 1, 0);
-        else if (c === 'Numpad1' || c === 'Comma') this.confirm(1);
+        else if (c === 'Numpad1' || c === 'Comma' || c === 'NumpadEnter' || c === 'Numpad0') this.confirm(1);
         else if (c === 'Numpad2' || c === 'Period') this.back(1);
       }
     });
@@ -295,7 +308,8 @@ export class SelectScene extends Phaser.Scene {
       if (this.trainingStep === 'p1') return this.confirmed[0] ? null : 0;
       return this.confirmed[1] ? null : 1;
     }
-    return this.confirmed[0] ? null : 0;
+    if (!this.confirmed[0]) return 0;
+    return this.confirmed[1] ? null : 1;
   }
 
   private move(player: 0 | 1, dr: number, dc: number): void {
@@ -306,10 +320,13 @@ export class SelectScene extends Phaser.Scene {
     }
     if (this.confirmed[player]) return;
     const cur = this.cursor[player];
-    let r = Phaser.Math.Clamp(cur.r + dr, 0, this.rows.length - 1);
+    const r = Phaser.Math.Clamp(cur.r + dr, 0, this.rows.length - 1);
     const row = this.rows[r];
     let c = Phaser.Math.Clamp(cur.c + dc, 0, row.length - 1);
-    if (dr !== 0) c = Phaser.Math.Clamp(cur.c, 0, row.length - 1);
+    if (dr !== 0) {
+      const x = this.rows[cur.r]?.[cur.c]?.x ?? 0;
+      c = row.reduce((best, cell, i) => (Math.abs(cell.x - x) < Math.abs(row[best].x - x) ? i : best), 0);
+    }
     this.setCursor(player, r, c);
   }
 
@@ -320,10 +337,6 @@ export class SelectScene extends Phaser.Scene {
     this.cursor[player] = { r, c };
     if (this.room) { this.room.setCursor(this.cells.findIndex(cell => cell.row === r && cell.col === c)); return; }
     this.refreshAll();
-  }
-
-  private sameCell(player: 0 | 1, r: number, c: number): boolean {
-    return this.cursor[player].r === r && this.cursor[player].c === c;
   }
 
   private hovered(player: 0 | 1): Cell | null {
@@ -431,10 +444,23 @@ export class SelectScene extends Phaser.Scene {
       p2: p2.id,
       controllers: this.mode === 'training' ? ['p1keys', 'dummy'] : ['p1keys', 'p2keys'],
     };
-    this.time.delayedCall(900, () => {
+    // Wait for both fighters' atlases (usually already preloaded on hover), but never more than ~4s.
+    let pending = 2;
+    let minTime = false;
+    let gone = false;
+    const go = () => {
+      if (gone || !minTime || pending > 0) return;
+      gone = true;
       audio.music('battle');
       goTo(this, SCENES.Fight, data, 'slash');
-    });
+    };
+    for (const id of [p1.id, p2.id]) {
+      const set = spriteSetFor(id);
+      if (set) ensureSpriteSet(this, set, () => { pending--; go(); });
+      else pending--;
+    }
+    this.time.delayedCall(900, () => { minTime = true; go(); });
+    this.time.delayedCall(4000, () => { pending = 0; go(); });
   }
 
   private refreshBanner(): void {
@@ -523,17 +549,24 @@ export class SelectScene extends Phaser.Scene {
     const ult = def.moves.ultimate?.name ?? '—';
     moves.setText(`SP1  ${m1}\nSP2  ${m2}\nULT  ${ult}`);
 
-    const key = `sel-body-${def.id}-${side}`;
+    // AI sprite (atlas idle frame) when loaded; start loading it on hover so the fight starts instantly.
+    const set = spriteSetFor(def.id);
+    const spr = spriteBody(this, def.id, 'idle');
+    if (set && !spr && !this.requested.has(def.id)) {
+      this.requested.add(def.id);
+      ensureSpriteSet(this, set, (ok) => { if (ok && this.scene.isActive()) this.refreshAll(); });
+    }
+    const key = `sel-body-${def.id}-${side}${spr ? '-spr' : ''}`;
     if (this.previewKey[side] !== key) {
       this.previewKey[side] = key;
-      const tex = makeFullBodyTexture(this, def, key, 320, 'idle');
-      if (side === 0) {
-        this.p1Img?.destroy();
-        this.p1Img = this.add.image(cx, 500, tex).setOrigin(0.5, 1).setScale(0.78).setDepth(DEPTH.content);
+      let img: Phaser.GameObjects.Image;
+      if (spr) {
+        img = this.add.image(cx, 500, spr.key, spr.frame).setOrigin(side === 1 ? 1 - spr.pivotX : spr.pivotX, 1).setScale(310 / spr.h);
       } else {
-        this.p2Img?.destroy();
-        this.p2Img = this.add.image(cx, 500, tex).setOrigin(0.5, 1).setScale(0.78).setFlipX(true).setDepth(DEPTH.content);
+        img = this.add.image(cx, 500, makeFullBodyTexture(this, def, key, 320, 'idle')).setOrigin(0.5, 1).setScale(0.78);
       }
+      img.setFlipX(side === 1).setDepth(DEPTH.content);
+      if (side === 0) { this.p1Img?.destroy(); this.p1Img = img; } else { this.p2Img?.destroy(); this.p2Img = img; }
     }
 
     this.drawStats(statsG, side === 0 ? 110 : 1570, 816, def);

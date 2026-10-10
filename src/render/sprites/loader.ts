@@ -3,7 +3,7 @@
  * on its own loader. Textures are global in Phaser, so later scenes/matches reuse them instantly.
  */
 import Phaser from 'phaser';
-import { spriteSetFor, spriteUrl, type SpriteSet } from './sets';
+import { SPRITE_SETS, spriteSetFor, spriteUrl, type SpriteSet } from './sets';
 
 type Waiter = (ok: boolean) => void;
 const waiting = new Map<string, Waiter[]>();
@@ -59,4 +59,22 @@ export function ensureFormAtlas(scene: Phaser.Scene, key: string): void {
   formRequested.add(key);
   scene.load.atlas(key, spriteUrl(key, 'webp'), spriteUrl(key, 'json'));
   if (!scene.load.isLoading()) scene.load.start();
+}
+
+/** Load every set's bust image (small, ~50KB each) used for menu/HUD portraits. Resolves when the loader finishes. */
+export function loadBusts(scene: Phaser.Scene): Promise<void> {
+  const keys = Object.values(SPRITE_SETS).map((s) => s.bust).filter((k): k is string => !!k && !scene.textures.exists(k) && !failed.has(k));
+  if (!keys.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    const load = scene.load;
+    const done = () => {
+      load.off(Phaser.Loader.Events.COMPLETE, done);
+      for (const k of keys) if (!scene.textures.exists(k)) failed.add(k);
+      resolve();
+    };
+    load.on(Phaser.Loader.Events.COMPLETE, done);
+    scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => { load.off(Phaser.Loader.Events.COMPLETE, done); resolve(); });
+    for (const k of keys) load.image(k, spriteUrl(k, 'webp'));
+    if (!load.isLoading()) load.start();
+  });
 }
