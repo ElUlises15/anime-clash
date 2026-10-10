@@ -16,6 +16,7 @@ type W = Window & {
     hashLog(): Record<string, number>;
     net(): { ping: number | null; rollbacks: number; desyncs: number; stalls: number; confirmedFrame: number } | null;
     setAutoplay(on: boolean): void;
+    setSpeed(n: number): void;
     mode: string;
   };
 };
@@ -39,8 +40,8 @@ async function newPage(browser: Browser, errors: string[], tag: string) {
 async function startFightWithBots(host: Page, guest: Page, matchId: number) {
   for (const p of [host, guest]) await waitScene(p, 'Fight', 30_000);
   for (const p of [host, guest]) {
-    await p.waitForFunction((id) => (window as W).__acNet!.room()!.match?.matchId === id && (window as W).__ac?.mode === 'online', matchId);
-    await p.evaluate(() => (window as W).__ac!.setAutoplay(true));
+    await p.waitForFunction((id) => (window as W).__acNet!.room()!.match?.matchId === id && (window as W).__ac?.mode === 'online', matchId, { timeout: 30_000 });
+    await p.evaluate(() => { (window as W).__ac!.setAutoplay(true); (window as W).__ac!.setSpeed(4); });
   }
 }
 
@@ -102,6 +103,8 @@ test('online: create room, join via URL, select, ready, fight, KO, rematch, chan
 
   // Both: ELEGIR LUCHADOR -> Select
   for (const p of [host, guest]) { await key(p, 'Enter'); await waitScene(p, 'Select'); }
+  await host.waitForTimeout(600);
+  await host.screenshot({ path: `${SHOTS}/online_select_host.png` });
   await host.waitForTimeout(900);
   await key(host, 'KeyJ'); // lock hovered fighter
   await key(guest, 'KeyD');

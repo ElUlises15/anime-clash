@@ -71,6 +71,8 @@ export class FightScene extends Phaser.Scene {
   private onlineAutoplay = false;
   private silentShown = false;
   private hashLog: Record<number, number> = {};
+  /** Test/tooling only: simulation speed multiplier (both peers must use the same value online). */
+  private speed = 1;
 
   constructor() { super(SCENES.Fight); }
 
@@ -95,6 +97,7 @@ export class FightScene extends Phaser.Scene {
     this.localBot = null;
     this.silentShown = false;
     this.hashLog = {};
+    this.speed = 1;
     this.onlineAutoplay = this.fightData.mode === 'online' && !!data.autoplay;
     if (this.fightData.mode === 'online') {
       const room = getActiveRoom();
@@ -169,6 +172,8 @@ export class FightScene extends Phaser.Scene {
       confirmedHash: () => sim.hashState(this.net?.confirmedState ?? this.state),
       me: () => this.room?.snapshot.me ?? 0,
       hashLog: () => ({ ...this.hashLog }),
+      /** Tests only: run the fixed-step loop N times faster (1..8). */
+      setSpeed: (n: number) => { this.speed = Math.max(1, Math.min(8, n | 0)); },
       fastForward: (frames: number, until?: string) => {
         if (this.net) return this.state.frame; // online: never fast-forward (would desync pacing)
         for (let i = 0; i < frames && !this.ending; i++) {
@@ -291,14 +296,15 @@ export class FightScene extends Phaser.Scene {
     if (!this.state) return;
     this.fpsSmooth = this.fpsSmooth * 0.95 + (1000 / Math.max(1, delta)) * 0.05;
     if ((!this.paused || this.net) && !this.ending) {
-      this.acc += Math.min(delta, 250);
+      this.acc += Math.min(delta, 250) * this.speed;
       let steps = 0;
-      while (this.acc >= STEP_MS && steps < MAX_STEPS_PER_FRAME) {
+      const maxSteps = MAX_STEPS_PER_FRAME * this.speed;
+      while (this.acc >= STEP_MS && steps < maxSteps) {
         this.stepOnce();
         this.acc -= STEP_MS;
         steps++;
       }
-      if (steps === MAX_STEPS_PER_FRAME) this.acc = 0; // fell behind: drop time instead of spiralling
+      if (steps === maxSteps) this.acc = 0; // fell behind: drop time instead of spiralling
     }
     this.renderState(delta);
     const auth = this.net ? this.net.confirmedState : this.state;
