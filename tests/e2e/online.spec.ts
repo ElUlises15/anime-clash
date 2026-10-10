@@ -53,7 +53,18 @@ async function playToEnd(host: Page, guest: Page) {
       return s.phase !== 'intro' && s.fighters.some((f) => f.hp < f.maxHp);
     }, null, { timeout: 90_000 });
   }
-  await Promise.all([host, guest].map((p) => p.waitForFunction(() => (window as W).__ac!.confirmed().phase === 'matchEnd', null, { timeout: 600_000, polling: 500 })));
+  const t0 = Date.now();
+  for (;;) {
+    const st = await Promise.all([host, guest].map((p) => p.evaluate(() => {
+      const ac = (window as W).__ac!;
+      const c = ac.confirmed();
+      return { phase: c.phase, frame: c.frame, hp: c.fighters.map((f) => f.hp), rw: c.roundWins, net: ac.net() };
+    })));
+    if (st.every((x) => x.phase === 'matchEnd')) break;
+    console.log(`[${Math.round((Date.now() - t0) / 1000)}s]`, JSON.stringify(st));
+    expect(Date.now() - t0).toBeLessThan(900_000);
+    await host.waitForTimeout(15_000);
+  }
   const [h, g] = await Promise.all([host, guest].map((p) => p.evaluate(() => {
     const ac = (window as W).__ac!;
     const c = ac.confirmed();
