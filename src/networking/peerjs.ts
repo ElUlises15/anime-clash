@@ -46,8 +46,14 @@ class WebRtcLink implements PeerLink {
         else if (state === 'disconnected') logWarning('ice-disconnected', label);
       });
     }
+    let lastCheck = now();
     this.watchdog = setInterval(() => {
-      const silent = now() - this.lastRecvAt;
+      const t = now();
+      // If OUR main thread was stalled, data events queued behind this timer haven't run yet: skip this check.
+      const late = t - lastCheck > 1500;
+      lastCheck = t;
+      if (late) return;
+      const silent = t - this.lastRecvAt;
       if (silent > LINK_SILENCE_MS) this.finish(`No data from peer for ${Math.round(silent / 1000)} s`);
     }, 1000);
   }
