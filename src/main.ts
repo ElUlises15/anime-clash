@@ -6,6 +6,7 @@ import { SettingsScene } from './ui/scenes/SettingsScene';
 import { SelectScene } from './ui/scenes/SelectScene';
 import { PostMatchScene } from './ui/scenes/PostMatchScene';
 import { FightScene } from './game/scenes/FightScene';
+import { HudScene } from './game/scenes/HudScene';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -16,6 +17,6 @@ const game = new Phaser.Game({
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   render: { antialias: true, roundPixels: false, powerPreference: 'high-performance' },
   fps: { target: 60, smoothStep: false },
-  scene: [BootScene, TitleScene, SettingsScene, SelectScene, FightScene, PostMatchScene],
+  scene: [BootScene, TitleScene, SettingsScene, SelectScene, FightScene, HudScene, PostMatchScene],
 });
 (window as unknown as { __game: Phaser.Game }).__game = game;
