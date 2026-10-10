@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { getRoomCodeFromLocation } from '../router';
 import { SCENES } from '../sceneData';
 import { generateSharedTextures } from '../textures';
 import { loadSettings } from '../settings';
@@ -21,6 +22,7 @@ export class BootScene extends Phaser.Scene {
     } catch { /* ignore */ }
     void loadPortraitModule();
     void loadRegistry();
-    this.scene.start(SCENES.Title);
+    const code = getRoomCodeFromLocation();
+    this.scene.start(code ? SCENES.Lobby : SCENES.Title, code ? { action: 'join', code } : undefined);
   }
 }

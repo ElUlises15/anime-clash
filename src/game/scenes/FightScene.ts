@@ -110,7 +110,9 @@ export class FightScene extends Phaser.Scene {
           this.net.attachLink(room.link);
           this.hudScene?.toast('RIVAL RECONECTADO');
         } else if (ev.type === 'opponentLeft' && !ev.final) {
-          this.hudScene?.toast('RIVAL DESCONECTADO — esperando reconexión');
+          this.hudScene?.toast('RIVAL DESCONECTADO — esperando reconexión (15 s)');
+        } else if ((ev.type === 'opponentLeft' && ev.final) || ev.type === 'closed') {
+          this.showOpponentGone(ev.type === 'closed');
         } else if (ev.type === 'matchStart' && ev.match.matchId !== data.online!.match.matchId && !this.ending) {
           this.leave(SCENES.Fight, { ...this.fightData, seed: ev.match.seed, p1: ev.match.p1, p2: ev.match.p2, online: { match: ev.match, resume: ev.resume } });
         }
@@ -261,6 +263,18 @@ export class FightScene extends Phaser.Scene {
     ];
     this.hudScene.showPause(items);
     audio.playSfx?.('uiConfirm');
+  }
+
+  /** Opponent left for good (or room closed): sim is stalled; offer the way out. */
+  private showOpponentGone(closed: boolean) {
+    if (this.ending) return;
+    this.paused = true;
+    const host = this.room?.snapshot.role === 'host' && !closed;
+    this.hudScene.toast(closed ? 'SALA CERRADA' : 'EL RIVAL SE FUE');
+    this.hudScene.showPause([
+      ...(host ? [{ label: 'VOLVER A LA SALA', action: () => this.leave(SCENES.Lobby, { action: 'resume' }) }] : []),
+      { label: 'MENÚ PRINCIPAL', action: () => { clearActiveRoom(); this.leave(SCENES.Title, {}); } },
+    ]);
   }
 
   private resume() {

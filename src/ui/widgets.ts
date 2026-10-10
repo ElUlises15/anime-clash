@@ -477,3 +477,45 @@ export function slantPanel(
   strokePara(g, x, y, w, h, skew, opts?.accent ?? C.cyan, 2, 0.85);
   return g;
 }
+
+/** Clipboard helper shared by online screens, including browsers without Clipboard API. */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch { /* fallback */ }
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+  document.body.appendChild(ta); ta.select();
+  try { return document.execCommand('copy'); } catch { return false; } finally { ta.remove(); }
+}
+
+/** Blocking arcade dialog. Capture keyboard events before the underlying Phaser menu. */
+export function onlineDialog(scene: Phaser.Scene, title: string, message: string,
+  actions: { label: string; run: () => void }[], onCancel?: () => void): () => void {
+  const root = scene.add.container(0, 0).setDepth(10000).setScrollFactor(0);
+  const dim = scene.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x000000, 0.88).setInteractive();
+  root.add(dim);
+  root.add(slantPanel(scene, 460, 300, 1000, 480, { accent: C.magenta }));
+  root.add(arcadeText(scene, GAME_W / 2, 370, title, 42, HEX.cyan));
+  root.add(bodyText(scene, GAME_W / 2, 490, message, 26, HEX.cream, 0.5).setWordWrapWidth(880).setAlign('center'));
+  let index = 0; let closed = false;
+  const buttons = actions.map((a, i) => new ArcadeButton(scene, GAME_W / 2, 620 + i * 74, a.label,
+    () => { close(); a.run(); }, { w: 700, h: 58, size: 24 }));
+  root.add(buttons); buttons[0]?.setFocused(true);
+  const key = (e: KeyboardEvent) => {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.repeat) return;
+    if (['ArrowDown', 'KeyS', 'ArrowRight', 'KeyD'].includes(e.code)) index = (index + 1) % buttons.length;
+    else if (['ArrowUp', 'KeyW', 'ArrowLeft', 'KeyA'].includes(e.code)) index = (index + buttons.length - 1) % buttons.length;
+    else if (['Enter', 'KeyJ', 'Space'].includes(e.code)) buttons[index]?.activate();
+    else if (['Escape', 'KeyK'].includes(e.code)) { close(); (onCancel ?? actions[actions.length - 1]?.run)?.(); }
+    buttons.forEach((b, i) => b.setFocused(i === index));
+  };
+  window.addEventListener('keydown', key, true);
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, close);
+  function close(): void {
+    if (closed) return; closed = true;
+    window.removeEventListener('keydown', key, true);
+    scene.events.off(Phaser.Scenes.Events.SHUTDOWN, close);
+    root.destroy(true);
+  }
+  return close;
+}

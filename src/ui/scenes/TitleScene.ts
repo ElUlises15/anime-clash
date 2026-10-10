@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { getRoomCodeFromLocation } from '../router';
 import { GAME_W, GAME_H, SCENES } from '../sceneData';
 import { audio } from '../../audio/AudioEngine';
 import { attachArcadeBackground, markUi } from '../backdrop';
@@ -19,6 +20,10 @@ export class TitleScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.mode = 'root';
+    const hashChanged = () => { const code = getRoomCodeFromLocation(); if (code) goTo(this, SCENES.Lobby, { action: 'join', code }); };
+    window.addEventListener('hashchange', hashChanged);
+    this.events.once('shutdown', () => window.removeEventListener('hashchange', hashChanged));
     playIntroWipe(this);
     attachArcadeBackground(this, 'title');
     audio.music('menu');
@@ -29,7 +34,7 @@ export class TitleScene extends Phaser.Scene {
     this.buildMenus();
 
     hintBar(this, 'W/S o flechas · ENTER / J / CLICK confirmar · ESC volver');
-    arcadeText(this, 48, GAME_H - 36, 'FASE 1  ·  LOCAL', 16, HEX.dim, { origin: [0, 0.5], stroke: 3 });
+    arcadeText(this, 48, GAME_H - 36, 'LOCAL + ONLINE · P2P', 16, HEX.dim, { origin: [0, 0.5], stroke: 3 });
     arcadeText(this, GAME_W - 48, GAME_H - 36, '1v1 ARCADE FIGHTER', 16, HEX.dim, { origin: [1, 0.5], stroke: 3 });
 
     markUi(SCENES.Title, this);

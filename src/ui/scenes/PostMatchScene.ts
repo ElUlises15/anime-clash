@@ -1,10 +1,14 @@
 import Phaser from 'phaser';
+import { getActiveRoom } from '../../networking';
+import type { Room } from '../../networking/types';
+import { attachOnlineOverlay } from '../onlineOverlay';
+import { onlineFightData } from '../online';
 import { GAME_W, GAME_H, SCENES, type PostMatchSceneData, type MatchResult } from '../sceneData';
 import { audio } from '../../audio/AudioEngine';
 import { attachArcadeBackground, markUi } from '../backdrop';
 import { playIntroWipe, goTo } from '../transitions';
 import {
-  ArcadeButton, MenuController, arcadeText, hintBar, slantPanel, showToast,
+  ArcadeButton, MenuController, arcadeText, hintBar, slantPanel, showToast, copyToClipboard,
 } from '../widgets';
 import { C, HEX } from '../theme';
 import { getCharacter, loadRegistry, listCharacters } from '../roster';
@@ -13,6 +17,7 @@ import type { CharacterDef } from '../../characters/types';
 import type { MatchStats, PlayerIndex } from '../../game/sim/types';
 
 export class PostMatchScene extends Phaser.Scene {
+  private room?: Room;
   private result!: MatchResult;
   private menu?: MenuController;
 
@@ -27,6 +32,18 @@ export class PostMatchScene extends Phaser.Scene {
 
     this.result = data?.result ?? fallbackResult();
     const r = this.result;
+    this.room = r.mode === 'online' ? getActiveRoom() ?? undefined : undefined;
+    if (r.mode === 'online' && !this.room) { goTo(this, SCENES.Title); return; }
+    if (this.room) {
+      const room = this.room;
+      const unsub = room.on(e => {
+        if (e.type === 'matchStart') goTo(this, SCENES.Fight, onlineFightData(room, e.match, e.resume));
+        else if (e.type === 'toSelect') goTo(this, SCENES.Select, { mode: 'online' });
+        else if (e.type === 'toLobby') goTo(this, SCENES.Lobby, { action: 'resume' });
+      });
+      this.events.once('shutdown', unsub);
+      attachOnlineOverlay(this, room);
+    }
 
     void this.paint(r);
     markUi(SCENES.PostMatch, this);
@@ -36,6 +53,7 @@ export class PostMatchScene extends Phaser.Scene {
     await loadPortraitModule();
     await loadRegistry();
 
+    if (!this.scene.isActive()) return;
     const d1 = getCharacter(r.p1);
     const d2 = getCharacter(r.p2);
     const n1 = d1?.name ?? r.p1;
@@ -114,21 +132,36 @@ export class PostMatchScene extends Phaser.Scene {
     const online = r.mode === 'online';
     const returnLabel = online ? 'RETURN TO ROOM' : 'RETURN';
     const rematch = new ArcadeButton(this, 300, y, 'REMATCH', () => {
+      if (this.room) { this.room.requestRematch(); return; }
       goTo(this, SCENES.Fight, r.fightData);
     }, { w: 300, h: 58, accent: 'gold', size: 22 });
     const change = new ArcadeButton(this, 640, y, 'CHANGE FIGHTER', () => {
+      if (this.room) { this.room.changeFighter(); return; }
       goTo(this, SCENES.Select, { mode: r.mode });
     }, { w: 340, h: 58, accent: 'cyan', size: 22 });
     const ret = new ArcadeButton(this, 1020, y, returnLabel, () => {
+      if (this.room) { this.room.returnToRoom(); return; }
       goTo(this, SCENES.Title);
     }, { w: 360, h: 58, accent: 'magenta', size: 20 });
     const share = new ArcadeButton(this, 1420, y, 'SHARE RESULT', () => {
       void this.share(r);
     }, { w: 320, h: 58, accent: 'orange', size: 22 });
 
+    if (this.room) {
+      const room = this.room;
+      const status = arcadeText(this, 960, 928, '', 19, HEX.cyan);
+      const refresh = () => {
+        const s = room.snapshot;
+        const mine = s.players[s.me].rematch;
+        const rival = s.players[1 - s.me].rematch;
+        rematch.setLabel(mine ? 'ESPERANDO...' : 'REMATCH');
+        status.setText(`${mine ? 'ESPERANDO AL RIVAL... · ' : ''}RIVAL REMATCH: ${rival ? 'READY' : '—'} · PING ${s.ping ?? '—'} ms`);
+      };
+      const unsub = room.on(refresh); this.events.once('shutdown', unsub); refresh();
+    }
     this.menu = new MenuController(this, [rematch, change, ret, share], {
       horizontal: true,
-      onBack: () => goTo(this, SCENES.Title),
+      onBack: () => { if (this.room) this.room.returnToRoom(); else goTo(this, SCENES.Title); },
     });
   }
 
@@ -138,6 +171,15 @@ export class PostMatchScene extends Phaser.Scene {
     const n1 = d1?.name ?? r.p1;
     const n2 = d2?.name ?? r.p2;
     const w = r.winner === 0 ? n1 : r.winner === 1 ? n2 : 'EMPATE';
+    if (this.room) {
+      const text = `ANIME CLASH — ${n1} ${r.roundWins[0]}-${r.roundWins[1]} ${n2} (${r.winner === -1 ? 'empate' : `ganó ${w}`}) · jugá conmigo: ${this.room.snapshot.url}`;
+      try {
+        if (navigator.share) { await navigator.share({ title: 'ANIME CLASH', text }); return; }
+      } catch (error) { if ((error as Error).name === 'AbortError') return; }
+      const ok = await copyToClipboard(text);
+      if (this.scene.isActive()) showToast(this, ok ? '¡Resultado copiado!' : 'No se pudo copiar');
+      return;
+    }
     const lines = [
       'ANIME CLASH — RESULTADO',
       `${n1} vs ${n2}`,

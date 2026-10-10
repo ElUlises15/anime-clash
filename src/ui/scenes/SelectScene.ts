@@ -1,10 +1,14 @@
 import Phaser from 'phaser';
+import { getActiveRoom } from '../../networking';
+import type { Room } from '../../networking/types';
+import { attachOnlineOverlay } from '../onlineOverlay';
+import { onlineFightData } from '../online';
 import type { CharacterDef } from '../../characters/types';
 import { GAME_W, GAME_H, SCENES, type GameMode, type SelectSceneData, type FightSceneData } from '../sceneData';
 import { audio } from '../../audio/AudioEngine';
 import { attachArcadeBackground, markUi } from '../backdrop';
 import { playIntroWipe, goTo } from '../transitions';
-import { arcadeText, bodyText, fillPara, strokePara, hintBar, slantPanel } from '../widgets';
+import { ArcadeButton, arcadeText, bodyText, fillPara, strokePara, hintBar, slantPanel } from '../widgets';
 import { C, DEPTH, HEX } from '../theme';
 import { listFranchises, loadRegistry, resetRegistryCache, type FranchiseGroup } from '../roster';
 import { makeFullBodyTexture, makePortraitTexture, loadPortraitModule } from '../portraitAdapter';
@@ -20,6 +24,10 @@ interface Cell {
 }
 
 export class SelectScene extends Phaser.Scene {
+  private room?: Room;
+  private onlineStatus?: Phaser.GameObjects.Text;
+  private readyButton?: ArcadeButton;
+  private readyAt: number | null = null;
   private mode: GameMode = 'versus';
   private cells: Cell[] = [];
   private rows: Cell[][] = [];
@@ -54,6 +62,11 @@ export class SelectScene extends Phaser.Scene {
 
   create(data: SelectSceneData): void {
     this.mode = data?.mode ?? 'versus';
+    this.room = this.mode === 'online' ? getActiveRoom() ?? undefined : undefined;
+    this.readyAt = null;
+    this.previewKey = ['', ''];
+    this.p1Img = undefined; this.p2Img = undefined;
+    if (this.mode === 'online' && !this.room) { goTo(this, SCENES.Title); return; }
     this.confirmed = [false, false];
     this.locked = [null, null];
     this.trainingStep = 'p1';
@@ -66,19 +79,34 @@ export class SelectScene extends Phaser.Scene {
     audio.music('menu');
 
     arcadeText(this, GAME_W / 2, 48, 'ELEGÍ TU LUCHADOR', 48, HEX.gold).setLetterSpacing(6);
-    const sub = this.mode === 'training' ? 'TRAINING  ·  primero vos, después el dummy' : 'LOCAL VS  ·  P1 y P2 al mismo tiempo';
+    const sub = this.mode === 'online' ? `ONLINE · VOS SOS P${this.room!.snapshot.me + 1} · J elegir / READY · K deshacer` : this.mode === 'training' ? 'TRAINING  ·  primero vos, después el dummy' : 'LOCAL VS  ·  P1 y P2 al mismo tiempo';
     arcadeText(this, GAME_W / 2, 92, sub, 20, HEX.cyan, { stroke: 4 });
 
     this.buildPreviews();
     this.banner = arcadeText(this, GAME_W / 2, 150, '', 26, HEX.orange, { stroke: 5 });
     this.refreshBanner();
 
-    hintBar(this, this.mode === 'training'
+    hintBar(this, this.mode === 'online'
+      ? 'WASD / flechas mover · J elegir / READY · K deshacer · ESC sala'
+      : this.mode === 'training'
       ? 'P1  A/D/W/S mover  ·  J / CLICK confirmar  ·  K / ESC volver'
       : 'P1  WASD + J  ·  P2  flechas + Núm1 / ,  ·  ESC título');
 
     markUi(SCENES.Select, this);
     this.bindInput();
+    if (this.room) {
+      const room = this.room;
+      this.onlineStatus = arcadeText(this, 960, 1000, '', 20, HEX.cyan);
+      this.readyButton = new ArcadeButton(this, 960, 950, 'READY', () => this.confirm(room.snapshot.me), { w: 320, h: 48, size: 24 });
+      const unsub = room.on(e => {
+        if (e.type === 'matchStart') { this.launching = true; goTo(this, SCENES.Fight, onlineFightData(room, e.match, e.resume)); }
+        else if (e.type === 'toLobby') goTo(this, SCENES.Lobby, { action: 'resume' });
+        else this.syncOnline();
+      });
+      this.events.once('shutdown', unsub);
+      attachOnlineOverlay(this, room, { onClosed: () => { this.launching = true; } });
+      this.time.addEvent({ delay: 100, loop: true, callback: () => this.syncOnline() });
+    }
     void this.bootRoster();
   }
 
@@ -105,8 +133,13 @@ export class SelectScene extends Phaser.Scene {
       this.banner.setText('Todavía no hay luchadores registrados');
       return;
     }
+    if (!this.scene.isActive()) return;
     this.buildGrid(groups);
-    this.refreshAll();
+    if (this.room) {
+      const me = this.room.snapshot.me;
+      if (this.room.snapshot.players[me].cursor === null) { const cur = this.cursor[me]; this.room.setCursor(this.cells.findIndex(c => c.row === cur.r && c.col === cur.c)); }
+      this.syncOnline();
+    } else this.refreshAll();
   }
 
   private buildPreviews(): void {
@@ -222,6 +255,17 @@ export class SelectScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => {
       if (e.repeat || this.launching) return;
       const c = e.code;
+      if (this.room) {
+        const me = this.room.snapshot.me;
+        if (c === 'Escape') { this.room.returnToRoom(); goTo(this, SCENES.Lobby, { action: 'resume' }); }
+        else if (c === 'KeyA' || c === 'ArrowLeft') this.move(me, 0, -1);
+        else if (c === 'KeyD' || c === 'ArrowRight') this.move(me, 0, 1);
+        else if (c === 'KeyW' || c === 'ArrowUp') this.move(me, -1, 0);
+        else if (c === 'KeyS' || c === 'ArrowDown') this.move(me, 1, 0);
+        else if (c === 'KeyJ' || c === 'Enter' || c === 'Space') this.confirm(me);
+        else if (c === 'KeyK') this.back(me);
+        return;
+      }
       if (c === 'Escape') {
         this.back(0);
         return;
@@ -246,6 +290,7 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private mousePlayer(): 0 | 1 | null {
+    if (this.room) return this.room.snapshot.me;
     if (this.mode === 'training') {
       if (this.trainingStep === 'p1') return this.confirmed[0] ? null : 0;
       return this.confirmed[1] ? null : 1;
@@ -273,6 +318,7 @@ export class SelectScene extends Phaser.Scene {
     const prev = this.cursor[player];
     if (prev.r !== r || prev.c !== c) audio.playSfx('uiMove');
     this.cursor[player] = { r, c };
+    if (this.room) { this.room.setCursor(this.cells.findIndex(cell => cell.row === r && cell.col === c)); return; }
     this.refreshAll();
   }
 
@@ -287,6 +333,14 @@ export class SelectScene extends Phaser.Scene {
 
   private confirm(player: 0 | 1): void {
     if (this.waiting || !this.rows.length || this.launching) return;
+    if (this.room) {
+      const slot = this.room.snapshot.players[this.room.snapshot.me];
+      if (!slot.connected || !this.room.snapshot.players.every(p => p.connected)) return;
+      if (slot.ready) return;
+      if (slot.charId) this.room.setReady(true);
+      else { const cell = this.hovered(this.room.snapshot.me); if (cell) this.room.selectCharacter(cell.def.id); }
+      audio.playSfx('ready'); this.syncOnline(); return;
+    }
     if (this.mode === 'training') {
       if (this.trainingStep === 'p1') {
         const cell = this.hovered(0);
@@ -321,6 +375,13 @@ export class SelectScene extends Phaser.Scene {
 
   private back(player: 0 | 1): void {
     if (this.launching) return;
+    if (this.room) {
+      const slot = this.room.snapshot.players[this.room.snapshot.me];
+      if (slot.ready) this.room.setReady(false);
+      else if (slot.charId) this.room.selectCharacter(null);
+      else { this.room.returnToRoom(); goTo(this, SCENES.Lobby, { action: 'resume' }); }
+      this.syncOnline(); return;
+    }
     if (this.mode === 'training') {
       if (this.trainingStep === 'dummy') {
         this.confirmed[0] = false;
@@ -385,14 +446,14 @@ export class SelectScene extends Phaser.Scene {
   }
 
   private refreshAll(): void {
-    const p1cell = this.confirmed[0] ? this.cellOf(this.locked[0]) : this.hovered(0);
-    const p2cell = this.confirmed[1] ? this.cellOf(this.locked[1]) : this.hovered(this.mode === 'training' && this.trainingStep === 'p1' ? 0 : 1);
+    const p1cell = this.room && this.room.snapshot.players[0].cursor === null && !this.confirmed[0] ? null : this.confirmed[0] ? this.cellOf(this.locked[0]) : this.hovered(0);
+    const p2cell = this.room && this.room.snapshot.players[1].cursor === null && !this.confirmed[1] ? null : this.confirmed[1] ? this.cellOf(this.locked[1]) : this.hovered(this.mode === 'training' && this.trainingStep === 'p1' ? 0 : 1);
     // When training step p1, P2 preview follows P1 hover as a ghost? Better leave P2 empty until dummy pick.
     const p2show = this.mode === 'training' && this.trainingStep === 'p1' ? null : p2cell;
 
     for (const cell of this.cells) {
       const isP1 = p1cell?.def.id === cell.def.id && this.samePos(this.cursor[0], cell);
-      const isP2 = this.mode === 'versus'
+      const isP2 = (this.mode === 'versus' || this.mode === 'online')
         ? (p2cell?.def.id === cell.def.id && this.samePos(this.cursor[1], cell))
         : (this.trainingStep === 'dummy' && p2cell?.def.id === cell.def.id && this.samePos(this.cursor[1], cell));
       this.paintCard(cell.frame, 168, 228, !!isP1, !!isP2);
@@ -401,8 +462,29 @@ export class SelectScene extends Phaser.Scene {
 
     this.refreshPreview(0, p1cell?.def ?? null);
     this.refreshPreview(1, p2show?.def ?? (this.locked[1] ?? null));
-    this.p1Ready?.setVisible(this.confirmed[0]);
-    this.p2Ready?.setVisible(this.confirmed[1]);
+    this.p1Ready?.setVisible(this.room ? this.room.snapshot.players[0].ready : this.confirmed[0]);
+    this.p2Ready?.setVisible(this.room ? this.room.snapshot.players[1].ready : this.confirmed[1]);
+  }
+
+  private syncOnline(): void {
+    if (!this.room || !this.cells.length || this.launching) return;
+    const s = this.room.snapshot;
+    s.players.forEach((slot, i) => {
+      const side = i as 0 | 1;
+      const locked = this.cells.find(cell => cell.def.id === slot.charId);
+      const cell = locked ?? (slot.cursor === null ? undefined : this.cells[slot.cursor]);
+      if (cell) this.cursor[side] = { r: cell.row, c: cell.col };
+      this.locked[side] = locked?.def ?? null;
+      this.confirmed[side] = !!locked;
+    });
+    if (s.phase === 'ready') this.readyAt ??= Date.now(); else this.readyAt = null;
+    const countdown = this.readyAt === null ? '' : ` · ${Math.max(1, 3 - Math.floor((Date.now() - this.readyAt) / 1000))}`;
+    const mine = s.players[s.me];
+    this.banner.setText(s.phase === 'ready' ? `READY${countdown}` : mine.ready ? 'ESPERANDO AL RIVAL...' : mine.charId ? 'J / ENTER PARA READY · K DESBLOQUEAR' : 'ELEGÍ TU LUCHADOR');
+    this.onlineStatus?.setText(`RIVAL ${s.players[1 - s.me].connected ? '● CONECTADO' : '○ DESCONECTADO'} · PING ${s.ping ?? '—'} ms`);
+    this.readyButton?.setLabel(mine.ready ? 'READY ✓' : mine.charId ? 'READY' : 'ELEGIR');
+    this.readyButton?.setEnabled(!mine.ready && s.players.every(p => p.connected) && ['selecting', 'ready'].includes(s.phase));
+    this.refreshAll();
   }
 
   private samePos(cur: { r: number; c: number }, cell: Cell): boolean {
@@ -423,6 +505,8 @@ export class SelectScene extends Phaser.Scene {
     const cx = side === 0 ? 240 : GAME_W - 240;
 
     if (!def) {
+      (side === 0 ? this.p1Img : this.p2Img)?.setVisible(false);
+      this.previewKey[side] = '';
       name.setText('—');
       meta.setText('');
       desc.setText('');
