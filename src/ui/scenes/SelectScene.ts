@@ -8,6 +8,7 @@ import { GAME_W, GAME_H, SCENES, type GameMode, type SelectSceneData, type Fight
 import { audio } from '../../audio/AudioEngine';
 import { attachArcadeBackground, markUi } from '../backdrop';
 import { playIntroWipe, goTo } from '../transitions';
+import { controlsHint } from '../controlsHelp';
 import { ArcadeButton, arcadeText, bodyText, fillPara, strokePara, hintBar, slantPanel } from '../widgets';
 import { C, DEPTH, HEX } from '../theme';
 import { listFranchises, loadRegistry, resetRegistryCache, type FranchiseGroup } from '../roster';
@@ -96,6 +97,7 @@ export class SelectScene extends Phaser.Scene {
       : this.mode === 'training'
       ? 'P1  A/D/W/S mover  ·  J / CLICK confirmar  ·  K / ESC volver'
       : 'P1  WASD + J / CLICK  ·  P2  flechas + Núm1 / Núm0 / ,  ·  ESC título');
+    if (this.mode !== 'online') arcadeText(this, GAME_W / 2, GAME_H - 68, `EN COMBATE  ·  ${controlsHint('p1keys')}`, 18, HEX.cyan, { stroke: 4 });
 
     markUi(SCENES.Select, this);
     this.bindInput();

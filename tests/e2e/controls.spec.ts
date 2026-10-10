@@ -44,3 +44,46 @@ test('settings: remap a key with keyboard, persist, reset', async ({ page }) => 
   await waitScene(page, 'Title');
   expect(errors).toEqual([]);
 });
+
+type FightWindow = Window & { __ac?: { mode: string; getState(): { phase: string; frame: number; fighters: { hp: number; maxHp: number; moveId: string | null }[] } } };
+
+test('fight: new P1 keys attack, H toggles controls help and pauses', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('./');
+  await waitScene(page, 'Title');
+  await page.waitForTimeout(900);
+  for (const k of ['ArrowDown', 'ArrowDown', 'Enter']) await tap(page, k); // TRAINING
+  await waitScene(page, 'Select');
+  await page.waitForTimeout(2500);
+  await page.screenshot({ path: `${SHOTS}/controls-select-hint.png` });
+  for (const k of ['KeyJ', 'KeyD', 'KeyJ']) await tap(page, k);
+  await waitScene(page, 'Fight', 15_000);
+  await page.waitForFunction(() => (window as FightWindow).__ac?.getState().phase === 'fight', null, { timeout: 30_000 });
+  await page.keyboard.down('KeyD');
+  await page.waitForTimeout(1500);
+  await page.keyboard.up('KeyD');
+  const moves = new Set<string>();
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.down('KeyQ');
+    for (let j = 0; j < 4; j++) {
+      await page.waitForTimeout(40);
+      const m = await page.evaluate(() => (window as FightWindow).__ac!.getState().fighters[0].moveId);
+      if (m) moves.add(m);
+    }
+    await page.keyboard.up('KeyQ');
+    await page.waitForTimeout(200);
+  }
+  expect([...moves].length).toBeGreaterThan(0); // Q starts a light attack
+  await tap(page, 'KeyH');
+  const f0 = await page.evaluate(() => (window as FightWindow).__ac!.getState().frame);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${SHOTS}/controls-help-overlay.png` });
+  const f1 = await page.evaluate(() => (window as FightWindow).__ac!.getState().frame);
+  expect(f1).toBe(f0);
+  await tap(page, 'KeyH');
+  await page.waitForTimeout(400);
+  const f2 = await page.evaluate(() => (window as FightWindow).__ac!.getState().frame);
+  expect(f2).toBeGreaterThan(f1);
+  expect(errors).toEqual([]);
+});
