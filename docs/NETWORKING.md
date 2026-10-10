@@ -90,3 +90,50 @@ STUN (`stun.l.google.com:19302`, `stun1.l.google.com:19302`, `stun.cloudflare.co
 cannot connect (the join times out with a clear message). Configure a TURN server for those (values in `VITE_*` are public in
 the bundle → use restricted/short-lived credentials). The public PeerJS broker is best-effort (no SLA); if `animeclash-CODE`
 is still registered after a host reload, a new code is generated.
+
+## Connection stability during abilities (playtest fix, 2026-10)
+
+**Report**: "when you throw abilities the connection fails / reconnects / says connection lost" and "muy poco fluido".
+
+**Root cause** (several stacked problems, all in the transport/loop, not the sim):
+
+1. `WebRtcLink` treated **every PeerJS `DataConnection` `'error'` event as fatal** (`finish()` → room `reconnecting`). PeerJS
+   emits `'error'` for transient/non-fatal things (`MessageToBig`, `NotOpenYet` when a send races a state change, ICE
+   negotiation noise). A real death always also emits `'close'`.
+2. **ICE `'disconnected'` closed the link after a fixed 3 s**, even while data was still flowing. `'disconnected'` is a
+   common short blip (WiFi hiccup, missed consent checks under load) that recovers on its own.
+3. Ability-heavy moments (transform, ultimate cinematic) **stalled the main thread**: the SSJ form atlas was
+   lazy-loaded *at transform time* (WebP decode + GPU upload mid-fight), and the HUD re-rasterised its `Text` objects on
+   **every sim step** (up to 4–48 per rendered frame while catching up). A stalled peer sends no packets → the other
+   side showed `CONEXIÓN INESTABLE`, hit its prediction window and froze (stutter), and with (2) a long stall could
+   become a real drop + reconnect.
+4. After a stall the lagging peer **dropped time** (`acc = 0`), so it stayed behind and the other peer kept stalling at
+   the prediction cap → persistent stutter until time-sync slowly converged.
+5. Events of frames re-simulated by a rollback were discarded, so the **remote player's specials/hits often had no
+   VFX/sound** (with RTT > input delay almost all remote actions arrive via rollback).
+
+**Fix**
+
+* `peerjs.ts`: only a channel `'close'` or ICE `failed/closed` is fatal. `'error'` events and ICE `'disconnected'` are
+  logged as warnings. A **data-silence watchdog** closes the link only after `LINK_SILENCE_MS = 8000` ms without *any*
+  data from the peer (inputs flow at 60 Hz in a match, room pings at 1 Hz otherwise). Sends are wrapped in try/catch.
+* `FightScene`: online the fixed-step loop **catches up** (≤ 12 steps/frame, bounded debt) instead of dropping time, and
+  stops early on a stalled tick (no packet spam). A 50 ms **stall pump** (`setInterval`) keeps stepping the session and
+  sending inputs/acks whenever rAF hasn't run for 200 ms (hidden tab, long stall) — no rendering in that path.
+  HUD is updated once per rendered frame. Form atlases (`goku_ssj`, `vegeta_ssj`, …) are queued at fight start.
+* `NetSession`: VFX/audio never run inside re-simulation. Each `tick()` returns one deduplicated batch: the new frame's
+  events plus events a rollback revealed that were never shown (keyed by frame/type/player/move). `VfxSystem` no longer
+  drops batches by frame and caps simultaneous sparks at 32. Resim is bounded by the 8-frame prediction window.
+* The ultimate cinematic / hitstop freeze already lives in the sim state (`state.cinematic`, `state.hitstop`), so it is
+  identical on both peers; inputs keep being sent every tick during it.
+
+**Diagnostics**: `window.__ac.net()` → `NetStats` + `maxTickMs`, `maxResimMs`, `maxPacketGapMs`, `resimFrames`,
+`roomPhases` (phase history during the fight), `closes[]` / `warnings[]` (with timestamps; from `networking/diag.ts`),
+`reconnects`, `abilities {specials, ultimates}`. `window.__ac.perf()` → p50/p95/p99/max of render delta and `update()` cost.
+`window.__acNet.diag()` gives the raw log outside a fight. The debug overlay (`?debug=1`) shows the same numbers.
+
+**Stress test**: `tests/e2e/online.spec.ts` (real PeerJS broker, two browser contexts) enables `MatchStart.testMeter`
+(host hook `__acNet.setTestMeter(true)`: both peers top up energy/ult inside every `NetSession` step — deterministic,
+test-only, no balance change) and runs the QA bots with `{ spam: true }` (specials/ultimates whenever affordable) for two
+full matches, asserting no link closes, no `reconnecting` phase, no desyncs, specials > 10 and ultimates > 0 per side.
+Unit: `tests/unit/net/abilitySpam.test.ts` (same, over loopback with 50 ms + jitter + 5 % loss).
