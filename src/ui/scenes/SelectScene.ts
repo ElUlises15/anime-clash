@@ -95,7 +95,7 @@ export class SelectScene extends Phaser.Scene {
       ? 'WASD / flechas mover · J elegir / READY · K deshacer · ESC sala'
       : this.mode === 'training'
       ? 'P1  A/D/W/S mover  ·  J / CLICK confirmar  ·  K / ESC volver'
-      : 'P1  WASD + J  ·  P2  flechas + Núm1 / ,  ·  ESC título');
+      : 'P1  WASD + J / CLICK  ·  P2  flechas + Núm1 / Núm0 / ,  ·  ESC título');
 
     markUi(SCENES.Select, this);
     this.bindInput();
