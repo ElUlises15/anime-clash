@@ -14,14 +14,41 @@ npm run test:e2e     # Playwright (builds must exist: npm run build first). PW_P
 ```
 
 ## Controls
-P1: A/D move, W jump, S crouch, J light, K heavy, L special 1, U special 2, I block, O ultimate, Shift (or double tap) dash.
-P2 (local): arrows, numpad 1-6 / 0 (or `, . / ; ' ] [`). Esc pauses. Training: F1 dummy mode, F2 regen, F3 reset.
+Default keys (P1 is one-handed around WASD; P1 and P2 share no keys, so local VS works on one keyboard):
+
+| Action | P1 (left hand) | P2 (numpad) | P2 laptop (no numpad) |
+|---|---|---|---|
+| Move / jump / crouch | A D / W / S | ← → / ↑ / ↓ | ← → / ↑ / ↓ |
+| Light | Q (or 1) | Num1 | , |
+| Heavy | E (or 2) | Num2 | . |
+| Special 1 | R (or 3) | Num4 | ; |
+| Special 2 | F (or 4) | Num5 | ' |
+| Block | Space | Num0 | / |
+| Ultimate | C — or R+F together | Num3 — or Num4+Num5 | ] — or ; + ' |
+| Dash (+ direction) | Left Shift | Num6 / Num. / Right Ctrl | Right Shift |
+
+- **Dash**: hold the dash key with a direction, or double-tap ← / →.
+- **Ultimate chord**: Special 1 + Special 2 pressed together (same frame or within 3 frames) = Ultimate.
+  A lone special press is delayed by at most 3 frames while the game waits for its partner.
+- **Gamepad** (pad 1 = P1, pad 2 = P2): A light, B heavy, X sp1, Y sp2, LB/LT block, RB ultimate, RT/L3 dash.
+- **H** during a fight: controls overlay (also **CONTROLES** in the pause menu). **Esc / P** pauses.
+  Training: F1 dummy mode, F2 regen, F3 / Backspace reset.
+- Menus: arrows/WASD move, Enter / Space / J confirm, Esc / Backspace back, mouse hover + click.
+
+**Remapping**: SETTINGS → CONTROLES. Click a key cell (or focus it and press Enter) → *Pulsa una tecla...* → press the
+new key (Esc cancels). If the key was used by another action it is taken from it (same player: the actions swap keys).
+**RESTABLECER P1 / P2** restore the defaults. Bindings are saved in `localStorage['anime-clash-bindings']`;
+Esc, Backspace, P, H, Tab and F1–F3 are reserved and can't be bound.
+
+**Audio**: defaults are master 40% / music 16% / SFX 42% (saved in `localStorage['anime-clash-settings']`, applied at
+boot). Saves from older versions get the new volumes once. The master bus has a compressor + limiter and identical
+sounds are capped at 3 simultaneous voices, so stacked hits don't clip.
 
 ## Online (P2P)
 1. **ONLINE → CREATE ROOM**. You get a 6-character code and a link like
    `https://elulises15.github.io/anime-clash/#/room/ABC234` — use **COPIAR LINK** and send it to a friend.
 2. Your friend opens the link (or **ONLINE → JOIN ROOM** and types/pastes the code or link).
-3. Both see each other's status and ping in the lobby → **ELEGIR LUCHADOR** → pick with WASD + J, press J again for **READY**.
+3. Both see each other's status and ping in the lobby → **ELEGIR LUCHADOR** → pick with WASD + J (or Enter), press it again for **READY**.
    When both are READY a 3-second countdown starts and the fight begins. Each player uses the P1 keys.
 4. After the match: **REMATCH** (both press it), **CHANGE FIGHTER**, **RETURN TO ROOM**, **SHARE RESULT**.
 5. If the guest's connection drops, there is a 15 s window to reconnect (automatically, or by reopening the link) and the

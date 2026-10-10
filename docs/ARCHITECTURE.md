@@ -94,9 +94,14 @@ animated transitions). Spanish rioplatense text, arcade terms in English (READY,
 
 ## Input (src/game/input)
 `KeyboardInput` (window listeners, works without a scene) with `sample(set: 'p1keys'|'p2keys'): InputBits` called once per
-sim frame (handles double-tap dash and Shift dash). `GamepadInput` abstraction. Default keys P1: A/D move, W jump, S crouch,
-J light, K heavy, L sp1, U sp2, I block, O ult, Shift dash. P2: arrows move/jump/crouch, numpad 1 light, 2 heavy, 3 sp1,
-4 sp2, 5 block, 6 ult, 0 dash (also keys , . / ; ' ] [ as alternatives for laptops without numpad — see bindings.ts).
+sim frame (handles double-tap dash, dash-key + direction, and the Special1+Special2 = ULT chord from `ultChord.ts`,
+3-frame window). `GamepadInput` abstraction. Default keys (`DEFAULT_CODES` in bindings.ts, no key shared between sets):
+P1 A/D move, W jump, S crouch, Q light, E heavy, R sp1, F sp2, Space block, C ult, Left Shift dash, digits 1-4 as
+alternates; P2 arrows, Num1 light, Num2 heavy, Num4 sp1, Num5 sp2, Num0 block, Num3 ult, Num6 / Num. / Right Ctrl dash,
+laptop alternates `, . ; ' / ]` + Right Shift. Bindings are mutable: `getBindings(set)`, `setBinding(set, action, codes)`,
+`assignPrimary`, `resetBindings(set)`, `keyLabel(code)`; changes rebuild the code→bits maps and persist to
+`localStorage['anime-clash-bindings']` (versioned). `RESERVED_CODES` (Esc, Backspace, P, H, Tab, F1-F3) can't be bound.
+`src/ui/controlsHelp.ts` renders the in-fight help overlay (H) and `controlsHint(set)` one-liners from the live bindings.
 
 ## AI (src/game/ai/qaBot.ts)
 `createBot(seed, level)` -> `{ next(state: MatchState, me: PlayerIndex): InputBits }` — deterministic given state.
