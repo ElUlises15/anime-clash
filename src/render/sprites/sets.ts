@@ -121,6 +121,14 @@ SPRITE_SETS.vegeta = {
     special1: { mode: 'move', startup: ['moves_3'], active: ['moves_2'], recovery: ['moves_2', 'idle'], motion: 'lunge' },
     special2: { mode: 'move', startup: ['moves_3'], active: ['moves_3'], recovery: ['idle'] },
     transform: { mode: 'hold', frames: ['moves_3'] },
+    // vegeta moves_4 split empty / moves_5 merged two figures in the sheet -> use key poses instead
+    hitAir: { mode: 'hold', frames: ['hit'], motion: 'recoil' },
+    knockback: { mode: 'hold', frames: ['hit'], motion: 'recoil' },
+    knockdown: { mode: 'once', frames: ['hit', 'knockdown'], fps: 6 },
+    ko: { mode: 'once', frames: ['hit', 'knockdown'], fps: 5 },
+    dash: { mode: 'hold', frames: ['air_2'] },
+    walkFwd: { mode: 'loop', frames: ['walk', 'idle'], fps: 4, motion: 'walk' },
+    walkBack: { mode: 'loop', frames: ['idle', 'walk'], fps: 4, motion: 'walk' },
     ultimate: { mode: 'move', startup: ['moves_3'], active: ['ultimate'], recovery: ['ultimate', 'idle'] },
   },
 };

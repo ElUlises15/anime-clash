@@ -7,7 +7,7 @@ import {registerVisualDefinition} from './visualRegistry';
 import {makePortraitTexture} from './portrait';
 import {samplePose} from './rig/poses';
 import {spriteSetFor,SPRITE_HEIGHT_MUL,type SpriteSet} from './sprites/sets';
-import {ensureSpriteSet} from './sprites/loader';
+import {ensureSpriteSet,ensureFormAtlas} from './sprites/loader';
 import {SpriteBody} from './sprites/SpriteBody';
 import type {MoveTiming} from './sprites/frameSelect';
 
@@ -41,7 +41,7 @@ export class FighterView {
  const flash=!cinematicOwner&&f.lastHitFrame>=0&&hitAge>=0&&hitAge<4;const alpha=flash?1:state.cinematic.active&&!cinematicOwner?.48:f.invulnFrames>0&&!cinematicOwner&&state.frame%6<2?.45:1;
  const ghostActive=['dash','backdash','teleport'].includes(f.anim);
  if(this.body){
-  this.body.setForm(f.form);this.lastFrame=this.body.show(x,y,f.facing,f.anim,f.animFrame,timing);
+  if(f.form&&this.spriteSet?.forms?.[f.form])ensureFormAtlas(this.scene,this.spriteSet.forms[f.form]);this.body.setForm(f.form);this.lastFrame=this.body.show(x,y,f.facing,f.anim,f.animFrame,timing);
   const spr=this.body.sprite;if(flash)spr.setTintFill(0xffffff);else spr.clearTint();spr.setAlpha(alpha);
   const trail=Phaser.Display.Color.HexStringToColor(this.def.visuals.vfx.trail).color;
   this.spriteGhosts.forEach((g,i)=>{g.sprite.setVisible(ghostActive);if(ghostActive){g.setForm(f.form);g.show(x-f.facing*(i+1)*26,y,f.facing,f.anim,f.animFrame,timing);g.sprite.setTintFill(trail).setAlpha(.3-i*.08);}});

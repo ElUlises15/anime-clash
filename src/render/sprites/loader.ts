@@ -10,7 +10,7 @@ const waiting = new Map<string, Waiter[]>();
 const failed = new Set<string>();
 
 function textureKeys(set: SpriteSet): string[] {
-  return [set.atlas, ...Object.values(set.forms ?? {}), ...(set.bust ? [set.bust] : [])];
+  return [set.atlas, ...(set.bust ? [set.bust] : [])]; // form atlases load on demand (ensureFormAtlas)
 }
 
 export function isSpriteSetLoaded(scene: Phaser.Scene, set: SpriteSet): boolean {
@@ -50,4 +50,13 @@ export function ensureSpriteSet(scene: Phaser.Scene, set: SpriteSet, done?: Wait
 /** Optional warm-up hook (e.g. from the select screen once both fighters are picked). */
 export function preloadSpriteSets(scene: Phaser.Scene, ids: string[]): void {
   for (const id of ids) { const set = spriteSetFor(id); if (set) ensureSpriteSet(scene, set); }
+}
+
+const formRequested = new Set<string>();
+/** Load a form atlas (e.g. goku_ssj) the first time the form is used; until then the base atlas is shown. */
+export function ensureFormAtlas(scene: Phaser.Scene, key: string): void {
+  if (scene.textures.exists(key) || formRequested.has(key)) return;
+  formRequested.add(key);
+  scene.load.atlas(key, spriteUrl(key, 'webp'), spriteUrl(key, 'json'));
+  if (!scene.load.isLoading()) scene.load.start();
 }
