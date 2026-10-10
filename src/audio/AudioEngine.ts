@@ -14,6 +14,13 @@ export type MusicTrack = 'menu' | 'battle';
 
 export interface VolumeMap { master: number; music: number; sfx: number }
 
+/** Default mix (lowered after playtest feedback: was 0.8 / 0.45 / 0.7). */
+export const DEFAULT_VOLUMES: VolumeMap = { master: 0.4, music: 0.16, sfx: 0.42 };
+/** At most this many copies of the same SFX inside VOICE_WINDOW seconds; copies closer than VOICE_MIN_GAP are dropped. */
+export const MAX_SAME_VOICES = 3;
+const VOICE_WINDOW = 0.25;
+const VOICE_MIN_GAP = 0.03;
+
 type SfxFn = (ctx: AudioContext, dest: AudioNode, t: number, pitch: number, gain: number) => void;
 
 const SFX: Record<SfxKey, SfxFn> = {
@@ -122,7 +129,10 @@ export class AudioEngine {
   private noise: AudioBuffer | null = null;
   private unlocked = false;
   private disabled = false;
-  private vols: VolumeMap = { master: 0.8, music: 0.45, sfx: 0.7 };
+  private vols: VolumeMap = { ...DEFAULT_VOLUMES };
+  private limiter: DynamicsCompressorNode | null = null;
+  /** Recent start times (ctx seconds) per SFX key, for the identical-voice cap. */
+  private recentVoices = new Map<SfxKey, number[]>();
   private queuedMusic: MusicTrack | null | undefined;
   private sfxQueue: Array<{ key: SfxKey; pitch: number; gain: number }> = [];
   private musicTimer: number | null = null;
@@ -223,7 +233,16 @@ export class AudioEngine {
     if (!ctx || !dest) return;
     const fn = SFX[key];
     if (!fn) return;
-    fn(ctx, dest, ctx.currentTime, pitch, gain);
+    const now = ctx.currentTime;
+    const recent = (this.recentVoices.get(key) ?? []).filter((t) => now - t < VOICE_WINDOW);
+    if (recent.length >= MAX_SAME_VOICES || (recent.length && now - recent[recent.length - 1] < VOICE_MIN_GAP)) {
+      this.recentVoices.set(key, recent);
+      return;
+    }
+    recent.push(now);
+    this.recentVoices.set(key, recent);
+    // Later copies of a stacked sound play a bit quieter so bursts don't pile up in level.
+    fn(ctx, dest, now, pitch, gain * (recent.length > 1 ? 0.7 : 1));
   }
 
   private markUnlocked(): void {
@@ -257,8 +276,16 @@ export class AudioEngine {
       this.compressor.release.value = 0.12;
       this.musicGain.connect(this.master);
       this.sfxGain.connect(this.master);
+      // Brick-wall-ish limiter after the glue compressor: stacked hits never clip the output.
+      this.limiter = ctx.createDynamicsCompressor();
+      this.limiter.threshold.value = -4;
+      this.limiter.knee.value = 0;
+      this.limiter.ratio.value = 20;
+      this.limiter.attack.value = 0.001;
+      this.limiter.release.value = 0.08;
       this.master.connect(this.compressor);
-      this.compressor.connect(ctx.destination);
+      this.compressor.connect(this.limiter);
+      this.limiter.connect(ctx.destination);
       this.noise = makeNoise(ctx, 1.5);
       this.applyGains();
     } catch {
