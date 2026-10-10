@@ -70,6 +70,7 @@ export class FightScene extends Phaser.Scene {
   private localBot: Bot | null = null;
   private onlineAutoplay = false;
   private silentShown = false;
+  private hashLog: Record<number, number> = {};
 
   constructor() { super(SCENES.Fight); }
 
@@ -93,6 +94,7 @@ export class FightScene extends Phaser.Scene {
     this.roomUnsubs = [];
     this.localBot = null;
     this.silentShown = false;
+    this.hashLog = {};
     this.onlineAutoplay = this.fightData.mode === 'online' && !!data.autoplay;
     if (this.fightData.mode === 'online') {
       const room = getActiveRoom();
@@ -166,6 +168,7 @@ export class FightScene extends Phaser.Scene {
       confirmed: () => this.net?.confirmedState ?? this.state,
       confirmedHash: () => sim.hashState(this.net?.confirmedState ?? this.state),
       me: () => this.room?.snapshot.me ?? 0,
+      hashLog: () => ({ ...this.hashLog }),
       fastForward: (frames: number, until?: string) => {
         if (this.net) return this.state.frame; // online: never fast-forward (would desync pacing)
         for (let i = 0; i < frames && !this.ending; i++) {
@@ -308,6 +311,9 @@ export class FightScene extends Phaser.Scene {
     const bits = this.paused ? 0 : this.onlineAutoplay ? this.localBot!.next(net.state, me) : keys;
     const t = net.tick(bits);
     this.state = net.state;
+    // Desync audit trail for tests/tools: hash of the confirmed state every 60 confirmed frames.
+    const cf = net.stats.confirmedFrame;
+    if (cf % 60 === 0 && !this.hashLog[cf]) this.hashLog[cf] = sim.hashState(net.confirmedState);
     if (t.advanced) {
       this.stepsTotal++;
       if (t.events.length) {
