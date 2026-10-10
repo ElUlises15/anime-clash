@@ -17,6 +17,15 @@ describe('sprite frame selection', () => {
     expect(selectFrameName(c, 15, t)).toBe('r2');
     expect(selectFrameName(c, 99, t)).toBe('r2');
   });
+  it('spreads startup frames and holds the impact frame for the whole active window', () => {
+    const c: SpriteClip = { mode: 'move', startup: ['s0', 's1'], active: ['a0', 'impact'], recovery: ['r'] };
+    const t = { startup: 6, active: 8, recovery: 10 };
+    expect(selectFrameName(c, 0, t)).toBe('s0');
+    expect(selectFrameName(c, 3, t)).toBe('s1');
+    expect(selectFrameName(c, 6, t)).toBe('a0');
+    for (let f = 8; f < 14; f++) expect(selectFrameName(c, f, t)).toBe('impact');
+    expect(selectFrameName(c, 14, t)).toBe('r');
+  });
   it('loops and reverses deterministically', () => {
     const c: SpriteClip = { mode: 'loop', frames: ['a', 'b', 'c'], fps: 10 };
     expect([0, 6, 12, 18].map((f) => selectFrameName(c, f))).toEqual(['a', 'b', 'c', 'a']);

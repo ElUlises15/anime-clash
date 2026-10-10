@@ -50,7 +50,11 @@ export function selectFrameName(clip: SpriteClip, animFrame: number, timing?: Mo
     const first = clip.startup?.[0] ?? clip.active?.[0] ?? clip.frames?.[0] ?? '';
     const startup = timing?.startup ?? 6, active = timing?.active ?? 3, recovery = timing?.recovery ?? 10;
     if (f < startup) return pickPhase(clip.startup, first, f, startup);
-    if (f < startup + active) return pickPhase(clip.active, first, f - startup, active);
+    if (f < startup + active) {
+      // Snap through any lead-in active frames (2 sim frames each), then HOLD the impact frame for the rest of the window.
+      const a = clip.active && clip.active.length ? clip.active : [first];
+      return a[Math.min(a.length - 1, (f - startup) >> 1)];
+    }
     return pickPhase(clip.recovery ?? clip.active, first, Math.min(f - startup - active, recovery - 1), recovery);
   }
   const frames = clip.frames && clip.frames.length ? clip.frames : [''];
