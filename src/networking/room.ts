@@ -88,7 +88,7 @@ export class RoomSession implements Room {
     });
     return room;
   }
-  get snapshot(): RoomSnapshot { return { ...copy(this.state), role: this.role, me: this.me, ping: this.ping, error: this.error && { ...this.error }, url: this.url, reconnectDeadline: this.deadline }; }
+  get snapshot(): RoomSnapshot { return { ...copy(this.state), role: this.role, me: this.me, ping: this.ping === null ? null : Math.round(this.ping), error: this.error && { ...this.error }, url: this.url, reconnectDeadline: this.deadline }; }
   get link(): PeerLink | null { return this.currentLink; }
   on(cb: (e: RoomEvent) => void): () => void {
     this.listeners.add(cb);
