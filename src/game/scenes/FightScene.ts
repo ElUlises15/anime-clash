@@ -24,6 +24,7 @@ import { audio } from '../../audio';
 import { settings } from '../../ui/settings';
 import { SCENES, GROUND_Y, type FightSceneData, type MatchResult } from '../../ui/sceneData';
 import { HUD_SCENE, HudScene } from './HudScene';
+import { toggleControlsHelp, isControlsHelpOpen, hideControlsHelp, showControlsHelp, flashControlsHint } from '../../ui/controlsHelp';
 import { NetSession } from '../../networking/netcode';
 import { getActiveRoom, clearActiveRoom, netDiag, type RoomSession } from '../../networking';
 import { spriteSetFor } from '../../render/sprites/sets';
@@ -62,6 +63,7 @@ export class FightScene extends Phaser.Scene {
   private acc = 0;
   private ending = false;
   private paused = false;
+  private helpPaused = false;
   private debug = false;
   private debugG: Phaser.GameObjects.Graphics | null = null;
   private dummyMode: DummyMode | 'bot' = 'idle';
@@ -87,6 +89,11 @@ export class FightScene extends Phaser.Scene {
   private perfDelta = new Float32Array(PERF_SAMPLES);
   private perfCost = new Float32Array(PERF_SAMPLES);
   private perfN = 0;
+  private perfRender = new Float32Array(PERF_SAMPLES);
+  private renderN = 0;
+  private renderT0 = 0;
+  private onPreRender = () => { this.renderT0 = performance.now(); };
+  private onPostRender = () => { this.perfRender[this.renderN++ % PERF_SAMPLES] = performance.now() - this.renderT0; };
   private lastUpdateAt = 0;
   private pumpTimer: ReturnType<typeof setInterval> | null = null;
   private pumping = false;
@@ -119,6 +126,10 @@ export class FightScene extends Phaser.Scene {
     this.speed = 1;
     this.spam = false;
     this.perfN = 0;
+    this.renderN = 0;
+    this.lastNetInfo = null;
+    this.game.events.on(Phaser.Core.Events.PRE_RENDER, this.onPreRender);
+    this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPostRender);
     this.phaseLog = [];
     this.abilityCount = { specials: 0, ultimates: 0 };
     this.lastUpdateAt = performance.now();
@@ -173,6 +184,8 @@ export class FightScene extends Phaser.Scene {
     this.scene.launch(HUD_SCENE, { defs: this.defs, mode: this.fightData.mode, debug: this.debug });
     this.hudScene = this.scene.get(HUD_SCENE) as HudScene;
     this.scene.bringToTop(HUD_SCENE);
+    this.helpPaused = false;
+    this.time.delayedCall(600, () => { if (this.hudScene?.sys.isActive()) flashControlsHint(this.hudScene); });
 
     audio.music('battle');
     this.cameras.main.fadeIn(350, 7, 6, 12);
@@ -203,11 +216,11 @@ export class FightScene extends Phaser.Scene {
       },
       mode: this.fightData.mode,
       /** Simulate N frames immediately (tests/tools only). Stops early at the requested predicate phase. */
-      net: () => (this.net ? { ...this.net.stats, roomPhases: [...this.phaseLog], closes: netDiag.closes.map((c) => ({ ...c })),
-        warnings: netDiag.warnings.map((c) => ({ ...c })), reconnects: netDiag.reconnects, abilities: { ...this.abilityCount } } : null),
+      /** Online stats + diagnostics; after the fight ends it keeps returning the final numbers of that match. */
+      net: () => (this.net ? this.netInfo(this.net) : this.lastNetInfo),
       /** Frame-time profile since fight start (ms): render delta + update() CPU cost percentiles. */
       perf: () => this.perfReport(),
-      resetPerf: () => { this.perfN = 0; },
+      resetPerf: () => { this.perfN = 0; this.renderN = 0; },
       confirmed: () => this.net?.confirmedState ?? this.state,
       confirmedHash: () => sim.hashState(this.net?.confirmedState ?? this.state),
       me: () => this.room?.snapshot.me ?? 0,
@@ -257,6 +270,19 @@ export class FightScene extends Phaser.Scene {
 
   private onKey(e: KeyboardEvent) {
     if (this.ending) return;
+    // Controls help overlay (H). Pauses local play (online: local inputs go neutral) and restores on close.
+    if (this.hudScene && (e.code === 'KeyH' || (isControlsHelpOpen(this.hudScene) && (e.code === 'Escape' || e.code === 'Backspace')))) {
+      e.preventDefault();
+      if (toggleControlsHelp(this.hudScene)) {
+        this.helpPaused = !this.paused;
+        this.paused = true;
+      } else if (this.helpPaused) {
+        this.helpPaused = false;
+        this.resume();
+      }
+      return;
+    }
+    if (this.hudScene && isControlsHelpOpen(this.hudScene)) return;
     if (this.hudScene?.paused) {
       if (e.code === 'Escape' || e.code === 'Backspace') this.resume();
       else this.hudScene.pauseKey(e);
@@ -296,6 +322,7 @@ export class FightScene extends Phaser.Scene {
       // Online: the simulation keeps running (local inputs are neutral while the menu is open).
       this.hudScene.showPause([
         { label: 'CONTINUAR', action: () => this.resume() },
+        { label: 'CONTROLES', action: () => showControlsHelp(this.hudScene) },
         { label: 'SALIR DE LA SALA', action: () => { clearActiveRoom(); this.leave(SCENES.Title, {}); } },
       ]);
       audio.playSfx?.('uiConfirm');
@@ -304,6 +331,7 @@ export class FightScene extends Phaser.Scene {
     const items = [
       { label: 'CONTINUAR', action: () => this.resume() },
       ...(this.fightData.mode === 'training' ? [{ label: 'RESET', action: () => { this.resetTraining(); this.resume(); } }] : []),
+      { label: 'CONTROLES', action: () => showControlsHelp(this.hudScene) },
       { label: 'CAMBIAR LUCHADOR', action: () => this.leave(SCENES.Select, { mode: this.fightData.mode }) },
       { label: 'MENÚ PRINCIPAL', action: () => this.leave(SCENES.Title, {}) },
     ];
@@ -324,6 +352,7 @@ export class FightScene extends Phaser.Scene {
   }
 
   private resume() {
+    hideControlsHelp(this.hudScene);
     this.hudScene.hidePause();
     this.paused = false;
     this.acc = 0;
@@ -378,16 +407,23 @@ export class FightScene extends Phaser.Scene {
     try { this.advance(gap, 60); } finally { this.pumping = false; }
   }
 
+  private lastNetInfo: ReturnType<FightScene['netInfo']> | null = null;
+  private netInfo(net: NetSession) {
+    return { ...net.stats, roomPhases: [...this.phaseLog], closes: netDiag.closes.map((c) => ({ ...c })),
+      warnings: netDiag.warnings.map((c) => ({ ...c })), reconnects: netDiag.reconnects, abilities: { ...this.abilityCount } };
+  }
+
   private perfReport() {
     const n = Math.min(this.perfN, PERF_SAMPLES);
-    const pct = (arr: Float32Array) => {
-      const a = Array.from(arr.subarray(0, n)).sort((x, y) => x - y);
+    const pct = (arr: Float32Array, count = n) => {
+      const a = Array.from(arr.subarray(0, Math.min(count, PERF_SAMPLES))).sort((x, y) => x - y);
       const at = (q: number) => (a.length ? +a[Math.min(a.length - 1, Math.floor(q * a.length))].toFixed(2) : 0);
       return { p50: at(0.5), p95: at(0.95), p99: at(0.99), max: a.length ? +a[a.length - 1].toFixed(2) : 0 };
     };
     let over33 = 0;
     for (let i = 0; i < n; i++) if (this.perfDelta[i] > 33.4) over33++;
-    return { frames: n, delta: pct(this.perfDelta), cost: pct(this.perfCost), hitches: over33 };
+    // delta = time between frames; cost = FightScene.update() (sim + view updates); render = Phaser WebGL render pass (CPU side).
+    return { frames: n, delta: pct(this.perfDelta), cost: pct(this.perfCost), render: pct(this.perfRender, this.renderN), hitches: over33 };
   }
 
   private stepOnline(net: NetSession): boolean {
@@ -533,11 +569,14 @@ export class FightScene extends Phaser.Scene {
   }
 
   private cleanup() {
+    this.game.events.off(Phaser.Core.Events.PRE_RENDER, this.onPreRender);
+    this.game.events.off(Phaser.Core.Events.POST_RENDER, this.onPostRender);
     if (this.pumpTimer) clearInterval(this.pumpTimer);
     this.pumpTimer = null;
     for (const u of this.roomUnsubs) u();
     this.roomUnsubs = [];
     if (this.room) this.room.resumeProvider = null;
+    this.lastNetInfo = this.net ? this.netInfo(this.net) : null;
     this.net?.dispose();
     this.net = null;
     this.room = null;
