@@ -27,8 +27,14 @@ document why (it bypasses the budget).
 Forms (`CharacterDef.forms[form].statMul`) multiply `powerMul`, `speed` (walk/back/dash) and `defense` in percent while
 `fighter.form` is set (transformation ability). Status effects multiply too (see §6).
 
-Current roster: Goku `5/5/6/5/4` (Balanced: 1000 HP, 5.4 px/f, 1 air action), Naruto `4/6/7/5/3` (Rushdown: 1000 HP,
-96% power, 5.7 px/f, 2 air actions, but shorter normals and less regen).
+Current roster (power/speed/mobility/defense/energy):
+
+| Character | Points      | Archetype  | HP   | Power | Walk    | Air actions | Identity |
+|-----------|-------------|------------|------|-------|---------|-------------|----------|
+| Goku      | `5/5/6/5/4` | Balanced   | 1000 | 100%  | 5.4 px/f | 1 | cheap ki blasts, beam, teleport, Kiai, transformation ultimate |
+| Vegeta    | `6/6/5/4/4` | Rushdown   | 970  | 104%  | 5.7 px/f | 1 | normals that step forward, 4-blast barrage, Big Bang, Barrera (shield + burst), takes 102% damage |
+| Naruto    | `4/6/7/5/3` | Rushdown   | 1000 | 96%   | 5.7 px/f | 2 | clones, launcher, Rasengan rush, Kawarimi counter, less regen |
+| Sasuke    | `5/6/6/4/4` | Technical  | 970  | 100%  | 5.7 px/f | 1 | dive kick, slow 2-hit fireball, fast shuriken, air wire trap, Chidori, short strong counter, Kirin |
 
 ## 2. Frame data conventions
 
@@ -70,8 +76,11 @@ damage = trunc(base * attackerPowerMul% * scaling% * defenderDefense% / 1e6)   (
 * Corner: if the victim is within 70 px of a wall, the attacker is pushed back by 60% of the knockback instead.
 
 Combo targets: a 4–6 hit bread-and-butter should do **15–25%** HP (enforced by `tests/unit/balance.test.ts`):
-Goku `jab → straight → roundhouse → Kamehameha` ≈ 19%, Naruto `jab → flurry → rising kick → Rasengan` ≈ 20%.
-Ultimates ≈ 25–30% on a clean hit (Super Kamehameha 10 beam ticks, Rasenshuriken contact + 8 explosion ticks).
+`jab → light2 → heavy → special2` — Goku (Kamehameha) ≈ 19%, Vegeta (Galick Gun) ≈ 21%, Naruto (Rasengan) ≈ 20%,
+Sasuke (Chidori) ≈ 22%. `tests/unit/sim.feel.test.ts` checks the same chain comes out for every character with 0/4/8
+frames of human delay after each hit (hitstop gives humans that time).
+Ultimates ≈ 25–30% on a clean hit (Super Kamehameha / Final Flash 10 beam ticks, Rasenshuriken contact + 8 explosion
+ticks, Kirin 6 lightning ticks).
 
 ## 4. Blocking
 
@@ -82,6 +91,9 @@ Hits from behind (cross-ups on the same frame) can't be blocked. Blocking is ins
 * Chip: `move.chip`, default 0 for normals and 15% of damage for specials/ultimates; chip can KO.
 * Blockstun = `blockstun`; push = 75% of the hit knockback; hitstop 70%.
 * Air normals are `overhead` (must be blocked standing), sweeps/lows are `low`.
+* Pressure must never be infinite: every ground normal is **at most +3 on block** (`sim.feel.test.ts` measures it by
+  simulation for every character), jab → jab is not a cancel, and block push separates the fighters.
+* A forward dash can be cancelled into guard from its 4th frame (dash in, then block).
 
 ## 5. Meters
 
@@ -106,18 +118,47 @@ Expect roughly one ultimate per character per round.
 
 ## 7. Rounds
 
-Intro 100f → fight (75 s timer) → KO pause 100f / time-up 60f → round end 80f → next round or match end.
+Intro 100f → fight (75 s timer) → KO pause 90f (1.5 s, the first 30f are the KO hitstop freeze) / time-up 60f →
+round end 80f (victory pose) → next round or match end.
 Best of 3 (`roundsToWin`). Time-out: higher HP% wins, equal = draw round (no point). After `2*roundsToWin+1` rounds
 the match ends by rounds won (possibly a draw, `winner = -1`).
+
+## 7b. Input feel (universal)
+
+* Buffer: presses of LIGHT/HEAVY/SP1/SP2/ULT/DASH are remembered for `BUFFER_FRAMES` = 8 frames (not aged during
+  hitstop), so a one-frame tap during recovery, blockstun or hitstop always comes out.
+* An air normal/air special pressed so late that the fighter lands before it goes active (≤ 8 frames, nothing fired
+  yet) is refunded and re-buffered: the ground version comes out instead of nothing.
+* Jumps: airtime 39–42 frames, apex 200–220 px (asserted 38–50 f / 170–260 px for every character).
+* Dash ≈ 14 frames / ~190 px; backdash 18 frames with 10 i-frames.
+* Projectiles clash against opposing projectiles/beams by `power` using swept boxes (fast projectiles can't tunnel).
+* Beams: `EntityState.w` / `data.length` is the visible + colliding length, clamped to the stage edge and stopped at
+  the first opposing shield or at the opponent while it can be hit (`data.reach` = unobstructed length).
 
 ## 8. How to tune
 
 1. Edit numbers in `moves.ts` / `config.ts`. Keep stat points within budget.
 2. `npx vitest run` — validation, frame-data sanity, BnB damage range and determinism must stay green.
-3. Bot-vs-bot report (300 matches per pair, ~10 s):
+3. **Win-rate matrix** (bot vs bot, ~1 min for 300 matches per pair with 4 characters):
    `BALANCE_REPORT=1 BALANCE_N=300 npx vitest run tests/unit/balance.report.test.ts`
-   It prints win rates (also per bot level), average round length and total damage per move.
-   Goals: overall win rate within 45–55%, average round 30–60 s, no single move > ~20% of a character's damage.
-   Current: Goku vs Naruto ≈ 55/45 over 300 matches (even at bot levels 1–2; level-3 bots block lows/overheads
-   perfectly, which favours Goku's zoning), ≈ 42 s average round.
+   Method (`winMatrix` in `tests/unit/helpers.ts`): for every unordered pair of *different* characters (mirrors
+   excluded — they are 50% by definition) play N matches with seeds 1..N; sides alternate every seed (P1/P2) and the
+   QA bot level cycles 1→2→3 (both bots on the same level), so side and skill bias cancel out. The report prints the
+   matrix (row's win % vs column), wins/draws, average round length, longest match, and the damage share per move.
+   Goals: every cell within 40–60% (ideally 45–55%), average round 30–60 s, no single move > ~20% of a character's
+   damage. The always-on test `ai.botMatch.test.ts` runs a smaller matrix (18 per pair) and fails if any character wins
+   **more than 80%** of a matchup, plus all 16 ordered matchups (mirrors included) must end with a winner.
+
+   Current matrix (300 matches per pair):
+
+   | vs     | goku | vegeta | naruto | sasuke | overall |
+   |--------|------|--------|--------|--------|---------|
+   | goku   |  –   |  46%   |  53%   |  45%   |  48%    |
+   | vegeta | 54%  |   –    |  46%   |  53%   |  51%    |
+   | naruto | 47%  |  54%   |   –    |  46%   |  49%    |
+   | sasuke | 55%  |  47%   |  54%   |   –    |  52%    |
+
+   Average round 37–42 s. Biggest damage share per move ≈ 16–19% (ultimates, heavies, the main projectile).
+   Caveat: bots are not humans — level-3 bots block lows/overheads perfectly and never whiff-punish on purpose, so
+   use the matrix to catch outliers, then playtest.
 4. Prefer tuning in this order: frame data/hitboxes → damage → costs/cooldowns → stat points. Small steps (±5%).

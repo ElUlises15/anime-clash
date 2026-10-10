@@ -33,8 +33,11 @@ src/characters/registry.ts   one import + one entry in CHARACTERS
    `import { def as myChar } from './<franchise>/<id>';` and append `myChar` to `CHARACTERS`.
 6. **Validate**: `npx vitest run`. `tests/unit/characters.registry.test.ts` runs `validateCharacter` on every
    registered character (budget, required moves, frame-data ranges, ability types, cancel targets, forms) and the bot
-   test checks that every move of every character gets used in bot matches. Then run the balance report
-   (`BALANCE_REPORT=1 npx vitest run tests/unit/balance.report.test.ts`).
+   test checks that every move of every character gets used in bot matches, that all matchups end with a winner and
+   that nobody wins > 80% of a matchup. `sim.feel.test.ts` runs the feel checks (tap buffer, chain timing, jump
+   airtime, dash, block advantage ≤ +3, projectile clashes) on every registered character automatically. Add a
+   `balance.test.ts` BnB entry and kit tests like `tests/unit/characters.kits.test.ts`. Then run the win-rate matrix
+   (`BALANCE_REPORT=1 BALANCE_N=300 npx vitest run tests/unit/balance.report.test.ts`).
 
 ## Ability components (`AbilityRef.type`)
 
@@ -61,6 +64,43 @@ Need a new mechanic? Add a component in `src/abilities/<name>.ts` implementing `
 `updateEntity`, `onEntityHit`, `onExpire`, `onEntityStruck`, `interceptHit`), register it in `src/abilities/index.ts`,
 add the type to `AbilityRef['type']` (contract, additive) and `KNOWN_ABILITY_TYPES` in the registry. Components must be
 deterministic: integers only, no `Math.random`/`Date`, all state in `EntityState.data` / `FighterState`.
+
+## Worked examples: Vegeta and Sasuke (added with zero engine changes)
+
+Both were added as new folders + 2 lines in `registry.ts`; every mechanic is an existing component configured by data.
+Read their `moves.ts` side by side with Goku/Naruto to see how the same components produce different characters.
+
+### Vegeta — `dragonball/vegeta` (Rushdown, difficulty 3, points `6/6/5/4/4`)
+
+| Slot | Move | How it's built |
+|------|------|----------------|
+| `light2`, `heavy` | Rushing Elbow, Prince Knee | `selfVelocity: [{ frame, vx }]` steps forward so pressure carries; jab is 12f blockstun (≈ +1). |
+| `special1` | Ráfaga de Ki | `projectile` with `count: 4, spacing: 55` → four small blasts in a line (each `power: 1`, so each one cancels one weak projectile). Visual `kiBlastPurple`. |
+| `airSpecial1` | Ráfaga de Ki (aire) | same component, `count: 3, vy: -8` (diagonal down). |
+| `special2` | Galick Gun | `beam` (6 ticks, `power: 3`, `finalKnockdown`), visual `galickGun`. |
+| `special1Down` | Big Bang Attack | slow (`speed: 8`) 84 px `projectile` with `explode: true` → spawns an `aoe` (4 ticks) on contact, on clash or at the end of its life. Visual `bigBang`. |
+| `special2Down` | Barrera | two abilities in one move: a `shield` that follows him (`offsetX: 0`, 180×250, absorbs projectiles, beams, melee and clone strikes) on frame 3, then an `aoe` burst on frame 34 that knocks the rival away. Visual `barrier`. |
+| `ultimate` | Final Flash | `beam` 175 px thick, 1600 px long, 10 ticks, `cinematicFrames: 170`, visual `finalFlash`; render reads `visuals.vfx.ultimateText = 'FINAL FLASH!!'`. |
+
+### Sasuke — `naruto/sasuke` (Technical, difficulty 4, points `5/6/6/4/4`)
+
+| Slot | Move | How it's built |
+|------|------|----------------|
+| `airHeavy` | Dive Kick | `selfVelocity: [{ frame: 7, vx: 9, vy: -14 }]` — a negative `vy` in the air turns the jump into a dive. |
+| `special1` | Katon: Gōkakyū | big slow `projectile` (`speed: 9`, 96 px, `hits: 2, interval: 9`, `power: 3` → beats ki blasts/kunai), visual `fireball`. |
+| `special1Down` | Shuriken | `projectile` `count: 2, speed: 24` (the engine sweeps projectile clash boxes, so very fast projectiles still clash), visual `shuriken`. |
+| `airSpecial1` | Shuriken Trampa | `trap` (ground-anchored even when thrown from the air), arms after 18f, 44f stun, visual `wireTrap`. |
+| `special2` | Chidori | `dashAttack` `speed: 21` with an `orb` visual entity in the hand, 16f startup so it combos from the heavy. Visual `chidori`. |
+| `special2Down` | Sharingan | `counter` `response: 'teleportStrike'`, short window (18f) but 86 damage. Visual `sharingan`. |
+| `ultimate` | Kirin | `aoe` `at: 'opponent'`, `delay: 6`, radius 150, 6 ticks with `finalKnockdown` — lightning drops on the rival's position after the cinematic. Visual `kirin`, `ultimateText 'KIRIN!!'`. |
+
+Tips learned while adding them:
+* Check that your `special2` (or whatever you cancel into from `heavy`) combos: heavy hitstun (≈22) must exceed the
+  special's startup + travel time. Chidori first had 19f startup and dropped the combo by one frame;
+  `sim.feel.test.ts` (chain test) catches this for every registered character.
+* Give each character a different answer to projectiles (Goku: Instant Transmission, Vegeta: Barrera, Naruto: Kawarimi,
+  Sasuke: Gōkakyū beats small projectiles) so matchups differ.
+* Run the win-rate matrix (BALANCING.md §8) after adding a character and nudge costs/cooldowns first.
 
 ## Minimal example
 
@@ -127,7 +167,7 @@ export const def: CharacterDef = { ...config, moves, visuals };
 `src/characters/registry.ts`
 ```ts
 import { def as blaze } from './original/blaze';
-export const CHARACTERS: CharacterDef[] = [goku, naruto, blaze];
+export const CHARACTERS: CharacterDef[] = [goku, vegeta, naruto, sasuke, blaze];
 ```
 
 That's it: the select screen, HUD, bots, netcode and tests pick it up from the registry.
