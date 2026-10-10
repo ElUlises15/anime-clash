@@ -12,18 +12,18 @@ import {
   tickDash,
   type DoubleTapState,
 } from './doubleTap';
-
-const GAME_CODES = allGameCodes();
+import { applyUltChord, createUltChordState, type UltChordState } from './ultChord';
 
 interface SetState {
   held: InputBits;
   prev: InputBits;
   dashMod: boolean;
   dt: DoubleTapState;
+  chord: UltChordState;
 }
 
 function emptySet(): SetState {
-  return { held: NO_INPUT, prev: NO_INPUT, dashMod: false, dt: createDoubleTapState() };
+  return { held: NO_INPUT, prev: NO_INPUT, dashMod: false, dt: createDoubleTapState(), chord: createUltChordState() };
 }
 
 /**
@@ -104,6 +104,8 @@ export class KeyboardInput {
     bits &= ~BTN.DASH;
     if (lingering || (dashKey && dirHeld) || shiftDash) bits |= BTN.DASH;
     st.held = bits;
+    // R+F (Especial 1 + Especial 2) together = Ultimate. `held` keeps raw bits for edge detection above.
+    bits = applyUltChord(st.chord, bits);
     this.cache[set] = bits;
     return bits;
   }
@@ -117,13 +119,18 @@ export class KeyboardInput {
     resetDoubleTap(this.sets.p2keys.dt);
   }
 
+  /** True while the physical key is down (UI shortcuts outside the fight bits). */
+  isDown(code: string): boolean {
+    return this.down.has(code);
+  }
+
   getFrame(): number {
     return this.frame;
   }
 
   private handleDown(e: KeyboardEvent): void {
     const code = e.code;
-    if (GAME_CODES.has(code)) {
+    if (allGameCodes().has(code)) {
       const t = e.target as HTMLElement | null;
       const tag = t?.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA') e.preventDefault();
