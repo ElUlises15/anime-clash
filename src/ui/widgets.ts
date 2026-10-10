@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { audio } from '../audio/AudioEngine';
 import { GAME_W, GAME_H } from './sceneData';
 import { C, DEPTH, FONT, FONT_UI, HEX } from './theme';
+import { FocusNav, dirForKey, CONFIRM_KEYS, BACK_KEYS } from './focusNav';
 
 export function arcadeText(
   scene: Phaser.Scene,
@@ -203,89 +204,20 @@ export class ArcadeButton extends Phaser.GameObjects.Container {
   }
 }
 
-export class MenuController {
-  buttons: ArcadeButton[] = [];
-  index = 0;
-  private onBack?: () => void;
-  private keyHandler: (e: KeyboardEvent) => void;
-  private scene: Phaser.Scene;
-  private bound = false;
-  horizontal = false;
-
-  constructor(scene: Phaser.Scene, buttons: ArcadeButton[], opts?: { onBack?: () => void; horizontal?: boolean }) {
-    this.scene = scene;
-    this.onBack = opts?.onBack;
-    this.horizontal = !!opts?.horizontal;
-    this.keyHandler = (e) => this.onKey(e);
-    this.setButtons(buttons);
-    this.bind();
+/** Button menu on top of the 2D FocusNav (spatial arrows/WASD, hover = focus, Esc/Backspace = back). */
+export class MenuController extends FocusNav<ArcadeButton> {
+  constructor(scene: Phaser.Scene, buttons: ArcadeButton[], opts?: { onBack?: () => void; horizontal?: boolean; index?: number }) {
+    super(scene, [], { onBack: opts?.onBack });
+    this.setButtons(buttons, opts?.index ?? 0);
   }
 
-  setButtons(buttons: ArcadeButton[]): void {
-    this.buttons = buttons;
-    this.index = Phaser.Math.Clamp(this.index, 0, Math.max(0, buttons.length - 1));
-    for (const b of buttons) {
-      b.off('hover');
-      b.on('hover', () => {
-        const i = this.buttons.indexOf(b);
-        if (i >= 0) this.moveTo(i);
-      });
-    }
-    this.sync(false);
+  get buttons(): ArcadeButton[] { return this.items; }
+
+  setButtons(buttons: ArcadeButton[], focusIndex = 0): void {
+    this.setItems(buttons, focusIndex);
   }
 
-  destroy(): void {
-    this.unbind();
-  }
-
-  private bind(): void {
-    if (this.bound) return;
-    this.scene.input.keyboard?.on('keydown', this.keyHandler);
-    this.scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.unbind());
-    this.bound = true;
-  }
-
-  private unbind(): void {
-    if (!this.bound) return;
-    this.scene.input.keyboard?.off('keydown', this.keyHandler);
-    this.bound = false;
-  }
-
-  private onKey(e: KeyboardEvent): void {
-    if (e.repeat) return;
-    const c = e.code;
-    const vert = !this.horizontal;
-    if ((vert && (c === 'ArrowDown' || c === 'KeyS')) || (!vert && (c === 'ArrowRight' || c === 'KeyD'))) {
-      this.moveBy(1);
-    } else if ((vert && (c === 'ArrowUp' || c === 'KeyW')) || (!vert && (c === 'ArrowLeft' || c === 'KeyA'))) {
-      this.moveBy(-1);
-    } else if (c === 'Enter' || c === 'Space' || c === 'KeyJ' || c === 'NumpadEnter') {
-      this.buttons[this.index]?.activate();
-    } else if (c === 'Escape' || c === 'KeyK') {
-      audio.playSfx('uiBack');
-      this.onBack?.();
-    }
-  }
-
-  moveBy(d: number): void {
-    if (!this.buttons.length) return;
-    const n = this.buttons.length;
-    this.moveTo((this.index + d + n) % n);
-  }
-
-  moveTo(i: number): void {
-    if (i === this.index) {
-      this.sync(false);
-      return;
-    }
-    this.index = i;
-    audio.playSfx('uiMove');
-    this.sync(true);
-  }
-
-  private sync(_moved: boolean): void {
-    this.buttons.forEach((b, i) => b.setFocused(i === this.index));
-  }
+  moveTo(i: number): void { this.focus(i); }
 }
 
 export class Slider extends Phaser.GameObjects.Container {
@@ -448,7 +380,7 @@ export function showModal(scene: Phaser.Scene, title: string, headline: string, 
   root.add([dim, g, t1, t2, t3, btn]);
 
   const onKey = (e: KeyboardEvent) => {
-    if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'KeyJ' || e.code === 'KeyK' || e.code === 'Space') {
+    if (BACK_KEYS.includes(e.code) || CONFIRM_KEYS.includes(e.code)) {
       e.stopImmediatePropagation();
       close();
     }
@@ -496,23 +428,21 @@ export function onlineDialog(scene: Phaser.Scene, title: string, message: string
   root.add(slantPanel(scene, 460, 300, 1000, 480, { accent: C.magenta }));
   root.add(arcadeText(scene, GAME_W / 2, 370, title, 42, HEX.cyan));
   root.add(bodyText(scene, GAME_W / 2, 490, message, 26, HEX.cream, 0.5).setWordWrapWidth(880).setAlign('center'));
-  let index = 0; let closed = false;
+  let closed = false;
   const buttons = actions.map((a, i) => new ArcadeButton(scene, GAME_W / 2, 620 + i * 74, a.label,
     () => { close(); a.run(); }, { w: 700, h: 58, size: 24 }));
-  root.add(buttons); buttons[0]?.setFocused(true);
+  root.add(buttons);
+  const nav = new FocusNav(scene, buttons, { keyboard: false });
   const key = (e: KeyboardEvent) => {
     e.preventDefault(); e.stopImmediatePropagation();
-    if (e.repeat) return;
-    if (['ArrowDown', 'KeyS', 'ArrowRight', 'KeyD'].includes(e.code)) index = (index + 1) % buttons.length;
-    else if (['ArrowUp', 'KeyW', 'ArrowLeft', 'KeyA'].includes(e.code)) index = (index + buttons.length - 1) % buttons.length;
-    else if (['Enter', 'KeyJ', 'Space'].includes(e.code)) buttons[index]?.activate();
-    else if (['Escape', 'KeyK'].includes(e.code)) { close(); (onCancel ?? actions[actions.length - 1]?.run)?.(); }
-    buttons.forEach((b, i) => b.setFocused(i === index));
+    if (BACK_KEYS.includes(e.code)) { if (!e.repeat) { close(); (onCancel ?? actions[actions.length - 1]?.run)?.(); } return; }
+    if (dirForKey(e.code) || CONFIRM_KEYS.includes(e.code)) nav.handleKey(e);
   };
   window.addEventListener('keydown', key, true);
   scene.events.once(Phaser.Scenes.Events.SHUTDOWN, close);
   function close(): void {
     if (closed) return; closed = true;
+    nav.destroy();
     window.removeEventListener('keydown', key, true);
     scene.events.off(Phaser.Scenes.Events.SHUTDOWN, close);
     root.destroy(true);
