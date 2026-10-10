@@ -5,17 +5,26 @@
  */
 import { test, expect, type Page, type Browser } from '@playwright/test';
 
-const SHOTS = '../shots/phase2';
+const SHOTS = '../shots/gameplay-pass/online';
+type Pct = { p50: number; p95: number; p99: number; max: number };
+type NetInfo = {
+  ping: number | null; rollbacks: number; maxRollback: number; desyncs: number; resyncs: number; stalls: number; confirmedFrame: number;
+  maxTickMs: number; maxResimMs: number; maxPacketGapMs: number; resimFrames: number;
+  roomPhases: string[]; closes: { t: number; kind: string; detail: string }[]; warnings: { t: number; kind: string; detail: string }[]; reconnects: number;
+  abilities: { specials: number; ultimates: number };
+};
 type W = Window & {
   __game?: { scene: { isActive(key: string): boolean } };
   __acLobby?: { code: string; url: string };
-  __acNet?: { room(): { phase: string; players: { connected: boolean; charId: string | null; ready: boolean }[]; match: { matchId: number } | null } | undefined };
+  __acNet?: { setTestMeter(on: boolean): void; room(): { phase: string; players: { connected: boolean; charId: string | null; ready: boolean }[]; match: { matchId: number } | null } | undefined };
   __ac?: {
     getState(): { phase: string; frame: number; fighters: { hp: number; maxHp: number }[] };
     confirmed(): { phase: string; frame: number; winner: number | null; roundWins: number[]; fighters: { hp: number; maxHp: number }[] };
     hashLog(): Record<string, number>;
-    net(): { ping: number | null; rollbacks: number; desyncs: number; stalls: number; confirmedFrame: number } | null;
-    setAutoplay(on: boolean): void;
+    net(): NetInfo | null;
+    perf(): { frames: number; delta: Pct; cost: Pct; hitches: number };
+    resetPerf(): void;
+    setAutoplay(on: boolean, opts?: { spam?: boolean }): void;
     setSpeed(n: number): void;
     mode: string;
   };
@@ -41,7 +50,8 @@ async function startFightWithBots(host: Page, guest: Page, matchId: number) {
   for (const p of [host, guest]) await waitScene(p, 'Fight', 30_000);
   for (const p of [host, guest]) {
     await p.waitForFunction((id) => (window as W).__acNet!.room()!.match?.matchId === id && (window as W).__ac?.mode === 'online', matchId, { timeout: 30_000 });
-    await p.evaluate(() => { (window as W).__ac!.setAutoplay(true); (window as W).__ac!.setSpeed(4); });
+    // Stress: bots throw specials/ultimates whenever affordable (host enabled MatchStart.testMeter → meter tops up).
+    await p.evaluate(() => { (window as W).__ac!.setAutoplay(true, { spam: true }); (window as W).__ac!.setSpeed(4); (window as W).__ac!.resetPerf(); });
   }
 }
 
@@ -75,6 +85,18 @@ async function playToEnd(host: Page, guest: Page) {
   const common = Object.keys(h.hashes).filter((f) => f in g.hashes);
   expect(common.length).toBeGreaterThan(10);
   for (const f of common) expect(g.hashes[f], `confirmed hash @${f}`).toBe(h.hashes[f]);
+  // Zero tolerance: no link drop / reconnect / desync while abilities and ultimates are spammed.
+  const perf = await Promise.all([host, guest].map((p) => p.evaluate(() => (window as W).__ac!.perf())));
+  for (const [tag, n] of [['host', h.net], ['guest', g.net]] as const) {
+    console.log(`${tag} net`, JSON.stringify({ ...n, warnings: n!.warnings.slice(-5) }));
+    expect(n!.closes, `${tag} link closes`).toEqual([]);
+    expect(n!.reconnects, `${tag} reconnects`).toBe(0);
+    expect(n!.roomPhases, `${tag} room phases`).not.toContain('reconnecting');
+    expect(n!.desyncs, `${tag} desyncs`).toBe(0);
+    expect(n!.abilities.specials, `${tag} specials thrown`).toBeGreaterThan(10);
+    expect(n!.abilities.ultimates, `${tag} ultimates thrown`).toBeGreaterThan(0);
+  }
+  console.log('perf host', JSON.stringify(perf[0]), 'guest', JSON.stringify(perf[1]));
   console.log('match done', JSON.stringify({ winner: h.winner, roundWins: h.roundWins, commonHashes: common.length, hostNet: h.net, guestNet: g.net }));
   return h;
 }
@@ -122,6 +144,7 @@ test('online: create room, join via URL, select, ready, fight, KO, rematch, chan
   await key(guest, 'KeyJ');
   await host.waitForFunction(() => (window as W).__acNet!.room()!.players.every((x) => !!x.charId), null, { timeout: 15_000 });
   await guest.screenshot({ path: `${SHOTS}/online_select_guest.png` });
+  await host.evaluate(() => (window as W).__acNet!.setTestMeter(true));
   await key(host, 'KeyJ'); // READY
   await key(guest, 'KeyJ'); // READY
   await startFightWithBots(host, guest, 1);

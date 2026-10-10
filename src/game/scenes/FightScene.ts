@@ -25,10 +25,17 @@ import { settings } from '../../ui/settings';
 import { SCENES, GROUND_Y, type FightSceneData, type MatchResult } from '../../ui/sceneData';
 import { HUD_SCENE, HudScene } from './HudScene';
 import { NetSession } from '../../networking/netcode';
-import { getActiveRoom, clearActiveRoom, type RoomSession } from '../../networking';
+import { getActiveRoom, clearActiveRoom, netDiag, type RoomSession } from '../../networking';
+import { spriteSetFor } from '../../render/sprites/sets';
+import { ensureFormAtlas } from '../../render/sprites/loader';
 
 const STEP_MS = 1000 / SIM_HZ;
 const MAX_STEPS_PER_FRAME = 4;
+/** Online: the lagging peer may catch up this many steps in one render frame instead of dropping time (keeps clocks in sync). */
+const ONLINE_MAX_STEPS_PER_FRAME = 12;
+/** Online: if the render loop hasn't run for this long (tab hidden, long stall) a timer keeps stepping + sending inputs. */
+const PUMP_STALL_MS = 200;
+const PERF_SAMPLES = 1800;
 const DUMMY_MODES: (DummyMode | 'bot')[] = ['idle', 'block', 'jump', 'crouch', 'bot'];
 const DUMMY_LABEL: Record<string, string> = { idle: 'QUIETO', block: 'BLOQUEA', jump: 'SALTA', crouch: 'AGACHADO', bot: 'BOT QA' };
 
@@ -73,6 +80,16 @@ export class FightScene extends Phaser.Scene {
   private hashLog: Record<number, number> = {};
   /** Test/tooling only: simulation speed multiplier (both peers must use the same value online). */
   private speed = 1;
+  private spam = false;
+  // ---- perf / liveness instrumentation
+  private perfDelta = new Float32Array(PERF_SAMPLES);
+  private perfCost = new Float32Array(PERF_SAMPLES);
+  private perfN = 0;
+  private lastUpdateAt = 0;
+  private pumpTimer: ReturnType<typeof setInterval> | null = null;
+  private pumping = false;
+  private phaseLog: string[] = [];
+  private abilityCount = { specials: 0, ultimates: 0 };
 
   constructor() { super(SCENES.Fight); }
 
@@ -98,6 +115,11 @@ export class FightScene extends Phaser.Scene {
     this.silentShown = false;
     this.hashLog = {};
     this.speed = 1;
+    this.spam = false;
+    this.perfN = 0;
+    this.phaseLog = [];
+    this.abilityCount = { specials: 0, ultimates: 0 };
+    this.lastUpdateAt = performance.now();
     this.onlineAutoplay = this.fightData.mode === 'online' && !!data.autoplay;
     if (this.fightData.mode === 'online') {
       const room = getActiveRoom();
@@ -123,6 +145,8 @@ export class FightScene extends Phaser.Scene {
         }
       }));
       this.state = this.net.state;
+      // Keep stepping/sending from a timer if rAF stops (hidden tab, long main-thread stall) so the peer never goes silent.
+      this.pumpTimer = setInterval(() => this.pump(), 50);
     } else {
       this.state = this.newMatch();
     }
@@ -132,6 +156,9 @@ export class FightScene extends Phaser.Scene {
     this.camRig = new CameraRig(this);
     this.views = [new FighterView(this, this.defs[0], 0), new FighterView(this, this.defs[1], 1)];
     this.entityView = new EntityView(this, this.views);
+    // Transformation atlases (e.g. goku_ssj) used to load at transform time → decode + GPU upload hitch mid-fight
+    // (online: a long stall on one peer). Queue them now so they decode during the intro.
+    for (const def of this.defs) for (const key of Object.values(spriteSetFor(def.id)?.forms ?? {})) ensureFormAtlas(this, key);
     this.vfx = new VfxSystem(this, this.camRig);
     this.inputMgr = new InputManager();
     this.bots = this.fightData.controllers.map((c, i) =>
@@ -159,15 +186,26 @@ export class FightScene extends Phaser.Scene {
       hash: () => sim.hashState(this.state),
       steps: () => this.stepsTotal,
       /** Hand both sides to the QA bot (smoke tests / demo). */
-      setAutoplay: (on: boolean) => {
-        if (this.net) { this.onlineAutoplay = on; return; }
+      setAutoplay: (on: boolean, opts?: { spam?: boolean }) => {
+        if (this.net) {
+          this.onlineAutoplay = on;
+          if (opts?.spam !== undefined && this.room && this.fightData.online) {
+            this.spam = opts.spam;
+            this.localBot = createBot(((this.fightData.online.match.seed + this.room.snapshot.me * 7919) >>> 0) || 1, 2, { spam: opts.spam });
+          }
+          return;
+        }
         if (!on) return;
         this.fightData.controllers = ['cpu', 'cpu'];
         this.bots = [createBot(4242, 2), createBot(9191, 2)];
       },
       mode: this.fightData.mode,
       /** Simulate N frames immediately (tests/tools only). Stops early at the requested predicate phase. */
-      net: () => (this.net ? { ...this.net.stats } : null),
+      net: () => (this.net ? { ...this.net.stats, roomPhases: [...this.phaseLog], closes: netDiag.closes.map((c) => ({ ...c })),
+        warnings: netDiag.warnings.map((c) => ({ ...c })), reconnects: netDiag.reconnects, abilities: { ...this.abilityCount } } : null),
+      /** Frame-time profile since fight start (ms): render delta + update() CPU cost percentiles. */
+      perf: () => this.perfReport(),
+      resetPerf: () => { this.perfN = 0; },
       confirmed: () => this.net?.confirmedState ?? this.state,
       confirmedHash: () => sim.hashState(this.net?.confirmedState ?? this.state),
       me: () => this.room?.snapshot.me ?? 0,
@@ -292,21 +330,58 @@ export class FightScene extends Phaser.Scene {
   // ---------------------------------------------------------------- loop
   update(_time: number, delta: number) {
     if (!this.state) return;
+    const t0 = performance.now();
+    this.lastUpdateAt = t0;
     this.fpsSmooth = this.fpsSmooth * 0.95 + (1000 / Math.max(1, delta)) * 0.05;
-    if ((!this.paused || this.net) && !this.ending) {
-      this.acc += Math.min(delta, 250) * this.speed;
-      let steps = 0;
-      const maxSteps = MAX_STEPS_PER_FRAME * this.speed;
-      while (this.acc >= STEP_MS && steps < maxSteps) {
-        this.stepOnce();
-        this.acc -= STEP_MS;
-        steps++;
-      }
-      if (steps === maxSteps) this.acc = 0; // fell behind: drop time instead of spiralling
-    }
+    if ((!this.paused || this.net) && !this.ending) this.advance(delta);
     this.renderState(delta);
     const auth = this.net ? this.net.confirmedState : this.state;
     if (auth.phase === 'matchEnd' && !this.ending && auth.phaseFrame > 150) this.finishMatch();
+    if (this.room) {
+      const ph = this.room.snapshot.phase;
+      if (this.phaseLog[this.phaseLog.length - 1] !== ph) this.phaseLog.push(ph);
+    }
+    const i = this.perfN++ % PERF_SAMPLES;
+    this.perfDelta[i] = delta;
+    this.perfCost[i] = performance.now() - t0;
+  }
+
+  /** Fixed-step accumulator. Offline drops time when far behind; online catches up (bounded) so peers stay in sync. */
+  private advance(elapsedMs: number, stepCap?: number) {
+    const online = !!this.net;
+    this.acc += Math.min(elapsedMs, online ? 1000 : 250) * this.speed;
+    let steps = 0;
+    const maxSteps = (stepCap ?? (online ? ONLINE_MAX_STEPS_PER_FRAME : MAX_STEPS_PER_FRAME)) * this.speed;
+    while (this.acc >= STEP_MS && steps < maxSteps) {
+      this.stepOnce();
+      this.acc -= STEP_MS;
+      steps++;
+    }
+    if (steps === maxSteps) this.acc = online ? Math.min(this.acc, STEP_MS * maxSteps) : 0; // fell behind: bound the debt
+  }
+
+  /** Online watchdog (setInterval): when rAF has stalled, step the sim without rendering so inputs/acks keep flowing. */
+  private pump() {
+    if (!this.net || this.ending || !this.state) return;
+    const now = performance.now();
+    const gap = now - this.lastUpdateAt;
+    if (gap < PUMP_STALL_MS) return;
+    this.lastUpdateAt = now;
+    this.pumping = true;
+    // Background tabs throttle timers to ~1 Hz: allow a full second of steps per pump (no rendering, so it's cheap).
+    try { this.advance(gap, 60); } finally { this.pumping = false; }
+  }
+
+  private perfReport() {
+    const n = Math.min(this.perfN, PERF_SAMPLES);
+    const pct = (arr: Float32Array) => {
+      const a = Array.from(arr.subarray(0, n)).sort((x, y) => x - y);
+      const at = (q: number) => (a.length ? +a[Math.min(a.length - 1, Math.floor(q * a.length))].toFixed(2) : 0);
+      return { p50: at(0.5), p95: at(0.95), p99: at(0.99), max: a.length ? +a[a.length - 1].toFixed(2) : 0 };
+    };
+    let over33 = 0;
+    for (let i = 0; i < n; i++) if (this.perfDelta[i] > 33.4) over33++;
+    return { frames: n, delta: pct(this.perfDelta), cost: pct(this.perfCost), hitches: over33 };
   }
 
   private stepOnline(net: NetSession) {
@@ -320,7 +395,12 @@ export class FightScene extends Phaser.Scene {
     if (cf % 60 === 0 && !this.hashLog[cf]) this.hashLog[cf] = sim.hashState(net.confirmedState);
     if (t.advanced) {
       this.stepsTotal++;
-      if (t.events.length) {
+      for (const ev of t.events) {
+        if (ev.type === 'specialStart') this.abilityCount.specials++;
+        else if (ev.type === 'ultimateStart') this.abilityCount.ultimates++;
+      }
+      // VFX/audio only from the newest displayed frame (never from rollback re-simulation, never from the stall pump).
+      if (t.events.length && !this.pumping) {
         this.vfx.handleEvents(t.events, this.state);
         for (const ev of t.events) audio.playEvent(ev);
       }
@@ -401,9 +481,11 @@ export class FightScene extends Phaser.Scene {
         `pos=(${(f.x / FX).toFixed(0)},${(f.y / FX).toFixed(0)}) vel=(${(f.vx / FX).toFixed(1)},${(f.vy / FX).toFixed(1)}) ` +
         `hp=${f.hp} en=${f.energy} ult=${f.ult} stun=${f.stunFrames} inv=${f.invulnFrames} form=${f.form ?? '-'}`;
     };
+    if ((this.perfN & 3) !== 0) return; // text (+ state hash) every 4th frame: string building was a per-frame cost
     const ns = this.net?.stats;
     const netLine = ns
-      ? `\nNET ping=${ns.ping ?? '-'} delay=${ns.inputDelay} rb=${ns.rollbacks}(max ${ns.maxRollback}) stalls=${ns.stalls} desync=${ns.desyncs} resync=${ns.resyncs} conf=${ns.confirmedFrame} local=${ns.localFrame} remote=${ns.remoteFrame}`
+      ? `\nNET maxTick=${(ns.maxTickMs ?? 0).toFixed(1)}ms maxResim=${(ns.maxResimMs ?? 0).toFixed(1)}ms maxGap=${Math.round(ns.maxPacketGapMs ?? 0)}ms drops=${netDiag.reconnects} warn=${netDiag.warnings.length}` +
+        `${netDiag.closes.length ? ` last=${netDiag.closes[netDiag.closes.length - 1].detail}` : ''}\nNET ping=${ns.ping ?? '-'} delay=${ns.inputDelay} rb=${ns.rollbacks}(max ${ns.maxRollback}) stalls=${ns.stalls} desync=${ns.desyncs} resync=${ns.resyncs} conf=${ns.confirmedFrame} local=${ns.localFrame} remote=${ns.remoteFrame}`
       : '';
     this.hudScene.setDebug(
       `FPS ${this.fpsSmooth.toFixed(0)} | frame ${s.frame} phase=${s.phase}(${s.phaseFrame}) hitstop=${s.hitstop} ` +
@@ -442,6 +524,8 @@ export class FightScene extends Phaser.Scene {
   }
 
   private cleanup() {
+    if (this.pumpTimer) clearInterval(this.pumpTimer);
+    this.pumpTimer = null;
     for (const u of this.roomUnsubs) u();
     this.roomUnsubs = [];
     if (this.room) this.room.resumeProvider = null;
