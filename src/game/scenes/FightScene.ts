@@ -24,6 +24,8 @@ import { audio } from '../../audio';
 import { settings } from '../../ui/settings';
 import { SCENES, GROUND_Y, type FightSceneData, type MatchResult } from '../../ui/sceneData';
 import { HUD_SCENE, HudScene } from './HudScene';
+import { NetSession } from '../../networking/netcode';
+import { getActiveRoom, clearActiveRoom, type RoomSession } from '../../networking';
 
 const STEP_MS = 1000 / SIM_HZ;
 const MAX_STEPS_PER_FRAME = 4;
@@ -61,13 +63,20 @@ export class FightScene extends Phaser.Scene {
   private fpsSmooth = 60;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private stepsTotal = 0;
+  // ---- online (Phase 2)
+  private net: NetSession | null = null;
+  private room: RoomSession | null = null;
+  private roomUnsubs: (() => void)[] = [];
+  private localBot: Bot | null = null;
+  private onlineAutoplay = false;
+  private silentShown = false;
 
   constructor() { super(SCENES.Fight); }
 
   create(data: FightSceneData) {
     this.fightData = {
       ...data,
-      controllers: data.autoplay ? ['cpu', 'cpu'] : data.controllers ?? ['p1keys', 'p2keys'],
+      controllers: data.autoplay && data.mode !== 'online' ? ['cpu', 'cpu'] : data.controllers ?? ['p1keys', 'p2keys'],
       seed: data.seed ?? ((Date.now() & 0x7fffffff) >>> 0),
     };
     this.ending = false;
@@ -79,7 +88,37 @@ export class FightScene extends Phaser.Scene {
     this.defs = [getCharacter(this.fightData.p1), getCharacter(this.fightData.p2)];
     const training = this.fightData.mode === 'training';
     this.dummyMode = this.fightData.autoplay ? 'bot' : 'idle';
-    this.state = this.newMatch();
+    this.net = null;
+    this.room = null;
+    this.roomUnsubs = [];
+    this.localBot = null;
+    this.silentShown = false;
+    this.onlineAutoplay = this.fightData.mode === 'online' && !!data.autoplay;
+    if (this.fightData.mode === 'online') {
+      const room = getActiveRoom();
+      if (!room || !room.link || !data.online) {
+        this.scene.start(SCENES.Title, {});
+        return;
+      }
+      this.room = room;
+      const me = room.snapshot.me;
+      this.net = new NetSession({ link: room.link, role: room.snapshot.role, me, match: data.online.match, resume: data.online.resume });
+      this.localBot = createBot(((data.online.match.seed + me * 7919) >>> 0) || 1, 2);
+      room.resumeProvider = () => this.net?.snapshotForResume() ?? null;
+      this.roomUnsubs.push(room.on((ev) => {
+        if (ev.type === 'opponentReturned' && this.net && room.link) {
+          this.net.attachLink(room.link);
+          this.hudScene?.toast('RIVAL RECONECTADO');
+        } else if (ev.type === 'opponentLeft' && !ev.final) {
+          this.hudScene?.toast('RIVAL DESCONECTADO — esperando reconexión');
+        } else if (ev.type === 'matchStart' && ev.match.matchId !== data.online!.match.matchId && !this.ending) {
+          this.leave(SCENES.Fight, { ...this.fightData, seed: ev.match.seed, p1: ev.match.p1, p2: ev.match.p2, online: { match: ev.match, resume: ev.resume } });
+        }
+      }));
+      this.state = this.net.state;
+    } else {
+      this.state = this.newMatch();
+    }
 
     this.cameras.main.setBackgroundColor('#07060c');
     this.stage = new StageView(this);
@@ -114,13 +153,19 @@ export class FightScene extends Phaser.Scene {
       steps: () => this.stepsTotal,
       /** Hand both sides to the QA bot (smoke tests / demo). */
       setAutoplay: (on: boolean) => {
+        if (this.net) { this.onlineAutoplay = on; return; }
         if (!on) return;
         this.fightData.controllers = ['cpu', 'cpu'];
         this.bots = [createBot(4242, 2), createBot(9191, 2)];
       },
       mode: this.fightData.mode,
       /** Simulate N frames immediately (tests/tools only). Stops early at the requested predicate phase. */
+      net: () => (this.net ? { ...this.net.stats } : null),
+      confirmed: () => this.net?.confirmedState ?? this.state,
+      confirmedHash: () => sim.hashState(this.net?.confirmedState ?? this.state),
+      me: () => this.room?.snapshot.me ?? 0,
       fastForward: (frames: number, until?: string) => {
+        if (this.net) return this.state.frame; // online: never fast-forward (would desync pacing)
         for (let i = 0; i < frames && !this.ending; i++) {
           this.stepOnce();
           if (until && (this.state.phase === until || (until === 'cinematic' && this.state.cinematic.active))) break;
@@ -199,6 +244,15 @@ export class FightScene extends Phaser.Scene {
 
   private pause() {
     this.paused = true;
+    if (this.net) {
+      // Online: the simulation keeps running (local inputs are neutral while the menu is open).
+      this.hudScene.showPause([
+        { label: 'CONTINUAR', action: () => this.resume() },
+        { label: 'SALIR DE LA SALA', action: () => { clearActiveRoom(); this.leave(SCENES.Title, {}); } },
+      ]);
+      audio.playSfx?.('uiConfirm');
+      return;
+    }
     const items = [
       { label: 'CONTINUAR', action: () => this.resume() },
       ...(this.fightData.mode === 'training' ? [{ label: 'RESET', action: () => { this.resetTraining(); this.resume(); } }] : []),
@@ -219,7 +273,7 @@ export class FightScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     if (!this.state) return;
     this.fpsSmooth = this.fpsSmooth * 0.95 + (1000 / Math.max(1, delta)) * 0.05;
-    if (!this.paused && !this.ending) {
+    if ((!this.paused || this.net) && !this.ending) {
       this.acc += Math.min(delta, 250);
       let steps = 0;
       while (this.acc >= STEP_MS && steps < MAX_STEPS_PER_FRAME) {
@@ -230,10 +284,31 @@ export class FightScene extends Phaser.Scene {
       if (steps === MAX_STEPS_PER_FRAME) this.acc = 0; // fell behind: drop time instead of spiralling
     }
     this.renderState(delta);
-    if (this.state.phase === 'matchEnd' && !this.ending && this.state.phaseFrame > 150) this.finishMatch();
+    const auth = this.net ? this.net.confirmedState : this.state;
+    if (auth.phase === 'matchEnd' && !this.ending && auth.phaseFrame > 150) this.finishMatch();
+  }
+
+  private stepOnline(net: NetSession) {
+    const me = this.room!.snapshot.me;
+    const keys = this.inputMgr.samplePair(['p1keys', 'p2keys'])[0];
+    const bits = this.paused ? 0 : this.onlineAutoplay ? this.localBot!.next(net.state, me) : keys;
+    const t = net.tick(bits);
+    this.state = net.state;
+    if (t.advanced) {
+      this.stepsTotal++;
+      if (t.events.length) {
+        this.vfx.handleEvents(t.events, this.state);
+        for (const ev of t.events) audio.playEvent(ev);
+      }
+    }
+    const silent = net.isRemoteSilent(1000);
+    if (silent && !this.silentShown) this.hudScene.toast('CONEXIÓN INESTABLE…');
+    this.silentShown = silent;
+    this.hudScene.updateHud(this.state, this.hudExtra());
   }
 
   private stepOnce() {
+    if (this.net) { this.stepOnline(this.net); return; }
     const inputs = this.gatherInputs();
     sim.step(this.state, inputs);
     this.stepsTotal++;
@@ -259,7 +334,7 @@ export class FightScene extends Phaser.Scene {
 
   private hudExtra() {
     return {
-      ping: this.fightData.mode === 'online' ? null : undefined,
+      ping: this.fightData.mode === 'online' ? (this.net?.ping ?? null) : undefined,
       fps: Math.round(this.fpsSmooth),
       training: this.fightData.mode === 'training'
         ? { dummyMode: DUMMY_LABEL[this.dummyMode], lastDamage: this.lastDamage, comboDamage: this.lastComboDamage, regen: this.regen }
@@ -302,16 +377,21 @@ export class FightScene extends Phaser.Scene {
         `pos=(${(f.x / FX).toFixed(0)},${(f.y / FX).toFixed(0)}) vel=(${(f.vx / FX).toFixed(1)},${(f.vy / FX).toFixed(1)}) ` +
         `hp=${f.hp} en=${f.energy} ult=${f.ult} stun=${f.stunFrames} inv=${f.invulnFrames} form=${f.form ?? '-'}`;
     };
+    const ns = this.net?.stats;
+    const netLine = ns
+      ? `\nNET ping=${ns.ping ?? '-'} delay=${ns.inputDelay} rb=${ns.rollbacks}(max ${ns.maxRollback}) stalls=${ns.stalls} desync=${ns.desyncs} resync=${ns.resyncs} conf=${ns.confirmedFrame} local=${ns.localFrame} remote=${ns.remoteFrame}`
+      : '';
     this.hudScene.setDebug(
       `FPS ${this.fpsSmooth.toFixed(0)} | frame ${s.frame} phase=${s.phase}(${s.phaseFrame}) hitstop=${s.hitstop} ` +
-        `cine=${s.cinematic.active ? s.cinematic.framesLeft : 0} ents=${s.entities.length} hash=${sim.hashState(s).toString(16)}\n${line(0)}\n${line(1)}`,
+        `cine=${s.cinematic.active ? s.cinematic.framesLeft : 0} ents=${s.entities.length} hash=${sim.hashState(s).toString(16)}\n${line(0)}\n${line(1)}${netLine}`,
     );
   }
 
   // ---------------------------------------------------------------- exit
   private finishMatch() {
     this.ending = true;
-    const s = this.state;
+    const s = this.net ? this.net.confirmedState : this.state;
+    if (this.net && this.room) this.room.reportMatchEnd((s.winner ?? -1) as PlayerIndex | -1, s.frame, sim.hashState(s));
     const result: MatchResult = {
       mode: this.fightData.mode,
       p1: this.fightData.p1,
@@ -338,6 +418,12 @@ export class FightScene extends Phaser.Scene {
   }
 
   private cleanup() {
+    for (const u of this.roomUnsubs) u();
+    this.roomUnsubs = [];
+    if (this.room) this.room.resumeProvider = null;
+    this.net?.dispose();
+    this.net = null;
+    this.room = null;
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
     this.keyHandler = null;
     this.inputMgr?.destroy();
