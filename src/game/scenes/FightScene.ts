@@ -112,6 +112,21 @@ export class FightScene extends Phaser.Scene {
       getState: () => this.state,
       hash: () => sim.hashState(this.state),
       steps: () => this.stepsTotal,
+      /** Hand both sides to the QA bot (smoke tests / demo). */
+      setAutoplay: (on: boolean) => {
+        if (!on) return;
+        this.fightData.controllers = ['cpu', 'cpu'];
+        this.bots = [createBot(4242, 2), createBot(9191, 2)];
+      },
+      mode: this.fightData.mode,
+      /** Simulate N frames immediately (tests/tools only). Stops early at the requested predicate phase. */
+      fastForward: (frames: number, until?: string) => {
+        for (let i = 0; i < frames && !this.ending; i++) {
+          this.stepOnce();
+          if (until && (this.state.phase === until || (until === 'cinematic' && this.state.cinematic.active))) break;
+        }
+        return this.state.frame;
+      },
     };
     if (training) this.hudScene.events.once(Phaser.Scenes.Events.CREATE, () => this.hudScene.toast('F1 modo dummy · F2 regen · F3 reset'));
   }
