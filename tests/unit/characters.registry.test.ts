@@ -6,9 +6,12 @@ import { listAbilityTypes } from '../../src/abilities';
 import type { CharacterDef } from '../../src/characters/types';
 
 describe('character registry', () => {
-  it('has Goku and Naruto', () => {
-    expect(listCharacters().map((c) => c.id)).toEqual(expect.arrayContaining(['goku', 'naruto']));
+  it('has Goku, Vegeta, Naruto and Sasuke', () => {
+    expect(listCharacters().map((c) => c.id)).toEqual(expect.arrayContaining(['goku', 'vegeta', 'naruto', 'sasuke']));
     expect(getCharacter('goku').name).toBe('Goku');
+    expect(getCharacter('vegeta').archetype).toBe('Rushdown');
+    expect(getCharacter('sasuke').archetype).toBe('Technical');
+    expect(getCharacter('sasuke').difficulty).toBe(4);
     expect(() => getCharacter('nobody')).toThrow();
   });
 
@@ -32,7 +35,8 @@ describe('character registry', () => {
 
   it('groups by franchise', () => {
     const f = listFranchises();
-    expect(f.find((x) => x.id === 'dragonball')?.characters.map((c) => c.id)).toContain('goku');
+    expect(f.find((x) => x.id === 'dragonball')?.characters.map((c) => c.id)).toEqual(['goku', 'vegeta']);
+    expect(f.find((x) => x.id === 'naruto')?.characters.map((c) => c.id)).toEqual(['naruto', 'sasuke']);
     expect(f.find((x) => x.id === 'naruto')?.name).toBe('Naruto');
   });
 
@@ -49,6 +53,42 @@ describe('character registry', () => {
 
   it('every known ability type has a registered component', () => {
     expect(listAbilityTypes()).toEqual([...KNOWN_ABILITY_TYPES].sort());
+  });
+
+  it('characters are distinct: different stat spreads, archetypes or ability kits', () => {
+    const sig = (c: CharacterDef) => JSON.stringify([c.stats, c.archetype,
+      Object.values(c.moves).flatMap((m) => (m!.abilities ?? []).map((a) => a.type)).sort()]);
+    const sigs = CHARACTERS.map(sig);
+    expect(new Set(sigs).size).toBe(sigs.length);
+  });
+
+  it('new characters use the requested ability components and visual hints', () => {
+    const kit = (id: string) => Object.entries(getCharacter(id).moves).map(([slot, m]) => [slot, m!] as const);
+    const find = (id: string, slot: string) => kit(id).find(([s]) => s === slot)![1];
+    const types = (id: string, slot: string) => (find(id, slot).abilities ?? []).map((a) => a.type);
+    const visual = (id: string, slot: string) => (find(id, slot).abilities ?? []).map((a) => a.params.visual);
+    // Vegeta
+    expect(types('vegeta', 'special1')).toEqual(['projectile']);
+    expect(find('vegeta', 'special1').abilities![0].params.count).toBeGreaterThanOrEqual(3);
+    expect(types('vegeta', 'special2')).toEqual(['beam']);
+    expect(visual('vegeta', 'special2')).toEqual(['galickGun']);
+    expect(find('vegeta', 'special1Down').abilities![0].params.explode).toBe(true);
+    expect(visual('vegeta', 'special1Down')).toEqual(['bigBang']);
+    expect(types('vegeta', 'special2Down')).toContain('shield');
+    expect(visual('vegeta', 'special2Down')).toContain('barrier');
+    expect(visual('vegeta', 'ultimate')).toEqual(['finalFlash']);
+    // Sasuke
+    expect(visual('sasuke', 'special1')).toEqual(['fireball']);
+    expect(types('sasuke', 'special2')).toEqual(['dashAttack']);
+    expect(visual('sasuke', 'special2')).toEqual(['chidori']);
+    expect(find('sasuke', 'special1Down').abilities![0].params.count).toBe(2);
+    expect(visual('sasuke', 'special1Down')).toEqual(['shuriken']);
+    expect(types('sasuke', 'special2Down')).toEqual(['counter']);
+    expect(visual('sasuke', 'special2Down')).toEqual(['sharingan']);
+    expect(kit('sasuke').some(([, m]) => (m.abilities ?? []).some((a) => a.type === 'trap' && a.params.visual === 'wireTrap'))).toBe(true);
+    expect(types('sasuke', 'ultimate')).toEqual(['aoe']);
+    expect(find('sasuke', 'ultimate').abilities![0].params.at).toBe('opponent');
+    expect(visual('sasuke', 'ultimate')).toEqual(['kirin']);
   });
 
   it('characters are pure data (JSON roundtrip safe, besides visuals)', () => {

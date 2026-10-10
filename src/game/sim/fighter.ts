@@ -182,8 +182,11 @@ export function updateFighter(ctx: SimContext, f: FighterState, input: InputBits
     case 'dash':
       tickDash(ctx, f);
       if (f.mode === 'dash' && f.grounded && f.anim === 'dash' && f.modeFrame >= DASH_CANCEL_FRAME) {
-        // forward dash can be cancelled into attacks
-        tryBufferedMove(ctx, f, null, () => false);
+        // forward dash can be cancelled into attacks, or into guard (dash in, then block)
+        if (!tryBufferedMove(ctx, f, null, () => false) && has(input, BTN.BLOCK)) {
+          setMode(f, 'idle');
+          f.vx = Math.trunc(f.vx / 3);
+        }
       }
       break;
     case 'attack': {

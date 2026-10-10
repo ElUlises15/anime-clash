@@ -3,12 +3,14 @@
  * Character-specific numbers live in character data; these are the universal rules.
  */
 export const INTRO_FRAMES = 100;
-export const KO_FRAMES = 100;
+export const KO_FRAMES = 90; // 1.5 s KO pause (includes the KO hitstop freeze)
 export const ROUND_END_FRAMES = 80;
 export const TIMEUP_FRAMES = 60; // pause after 'timeUp' before roundEnd
 
 export const ENERGY_START = 300;
-export const BUFFER_FRAMES = 6; // attack/dash press buffer
+export const BUFFER_FRAMES = 8; // attack/dash press buffer (generous: keyboard players mash/press early)
+/** Air move cancelled by landing before it got going: its button is re-buffered so the ground version comes out. */
+export const LANDING_REBUFFER_FRAMES = 8;
 
 /** Spawn distance of each fighter from stage center (px). */
 export const START_OFFSET_PX = 280;

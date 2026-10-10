@@ -2,8 +2,8 @@
 import type { EntityKind, EntityState, Facing, FighterState, PlayerIndex } from './types';
 import { emit, type SimContext } from './context';
 import { getAbility } from '../../abilities/registry';
-import { entityBoxFx, hurtboxFx, overlapCenter, overlaps } from './boxes';
-import { applyHit, canBeHit, specFromEntity, type HitResult } from './combat';
+import { entityBoxFx, hurtboxFx, overlapCenter, overlaps, type Rect } from './boxes';
+import { applyHit, canBeHit, specFromEntity, type HitResult, type HitSpec } from './combat';
 
 export interface SpawnSpec {
   kind: EntityKind;
@@ -76,23 +76,30 @@ export function defaultEntityHit(ctx: SimContext, e: EntityState, target: Fighte
   return r;
 }
 
-/** Let opposing struck-able entities (shields...) intercept an entity's hit. Returns true if consumed. */
-function struckByEntity(ctx: SimContext, e: EntityState): boolean {
-  const box = entityBoxFx(e);
+/**
+ * Let entities owned by the side being attacked (shields absorb, clones poof...) intercept an attack whose hitbox is
+ * `box` (fixed-point). Returns true if one of them consumed it. Used by entity hits and summon strikes.
+ */
+export function strikeOpposingEntities(ctx: SimContext, attacker: PlayerIndex, box: Rect, spec: HitSpec,
+  self?: EntityState): boolean {
   for (const o of ctx.state.entities) {
-    if (o.owner === e.owner || o.life <= 0 || o === e) continue;
+    if (o.owner === attacker || o.life <= 0 || o === self) continue;
     const impl = getAbility(o.abilityType);
     if (!impl?.onEntityStruck) continue;
     const ob = entityBoxFx(o);
     if (!overlaps(box, ob)) continue;
-    if (impl.onEntityStruck(ctx, o, e.owner, specFromEntity(ctx, e), overlapCenter(box, ob))) {
-      e.hitsLeft--;
-      e.hitCooldown = typeof e.data.interval === 'number' ? e.data.interval : 0;
-      if (e.kind === 'projectile') e.life = 0;
-      return true;
-    }
+    if (impl.onEntityStruck(ctx, o, attacker, spec, overlapCenter(box, ob))) return true;
   }
   return false;
+}
+
+/** Let opposing struck-able entities (shields...) intercept an entity's hit. Returns true if consumed. */
+function struckByEntity(ctx: SimContext, e: EntityState): boolean {
+  if (!strikeOpposingEntities(ctx, e.owner, entityBoxFx(e), specFromEntity(ctx, e), e)) return false;
+  e.hitsLeft--;
+  e.hitCooldown = typeof e.data.interval === 'number' ? e.data.interval : 0;
+  if (e.kind === 'projectile') e.life = 0;
+  return true;
 }
 
 function tryEntityHit(ctx: SimContext, e: EntityState): void {
@@ -107,6 +114,16 @@ function tryEntityHit(ctx: SimContext, e: EntityState): void {
   else defaultEntityHit(ctx, e, target, spark);
 }
 
+/**
+ * Clash box: projectiles are swept over this frame's horizontal travel so two fast opposing projectiles can never
+ * tunnel through each other between frames.
+ */
+function clashBox(e: EntityState): Rect {
+  const r = entityBoxFx(e);
+  if (e.kind !== 'projectile' || e.vx === 0) return r;
+  return e.vx > 0 ? { ...r, x: r.x - e.vx, w: r.w + e.vx } : { ...r, w: r.w - e.vx };
+}
+
 /** Opposing projectiles/beams cancel by power. */
 function clashes(ctx: SimContext): void {
   const list = ctx.state.entities;
@@ -116,7 +133,7 @@ function clashes(ctx: SimContext): void {
     for (let j = i + 1; j < list.length; j++) {
       const b = list[j];
       if (b.life <= 0 || b.power <= 0 || b.owner === a.owner || (b.kind !== 'projectile' && b.kind !== 'beam')) continue;
-      const ra = entityBoxFx(a), rb = entityBoxFx(b);
+      const ra = clashBox(a), rb = clashBox(b);
       if (!overlaps(ra, rb)) continue;
       const c = overlapCenter(ra, rb);
       emit(ctx, { type: 'projectileClash', player: a.power >= b.power ? a.owner : b.owner, x: c.x, y: c.y,

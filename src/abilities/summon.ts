@@ -8,7 +8,7 @@ import type { Ability } from './types';
 import { num, str } from './types';
 import { FX } from '../game/sim/types';
 import { emit } from '../game/sim/context';
-import { spawnEntity } from '../game/sim/entities';
+import { spawnEntity, strikeOpposingEntities } from '../game/sim/entities';
 import { applyHit, canBeHit, specFromEntity } from '../game/sim/combat';
 import { hurtboxFx, overlapCenter, overlaps, relBoxFx } from '../game/sim/boxes';
 import { clampX, foe, hitData } from './common';
@@ -57,7 +57,9 @@ export const summon: Ability = {
         setAnim(e, 'heavy');
         const hb = relBoxFx(e.x, e.y, e.facing, { x: 0, y: 60, w: (d.attackRange as number) + 30, h: 90 });
         const hu = hurtboxFx(o);
-        if (e.hitsLeft > 0 && overlaps(hb, hu) && canBeHit(ctx, o)) {
+        if (e.hitsLeft > 0 && strikeOpposingEntities(ctx, e.owner, hb, specFromEntity(ctx, e), e)) {
+          e.hitsLeft = 0; // absorbed (e.g. by a shield)
+        } else if (e.hitsLeft > 0 && overlaps(hb, hu) && canBeHit(ctx, o)) {
           const r = applyHit(ctx, e.owner, o, specFromEntity(ctx, e), e.facing, overlapCenter(hb, hu), { entity: e });
           if (r !== 'whiff') e.hitsLeft = 0;
         }

@@ -1,9 +1,13 @@
 /** Movement integration, gravity, landing, friction, push boxes, stage bounds, max distance. */
 import type { FighterState } from './types';
 import { FX, MAX_FIGHTER_DISTANCE_PX, STAGE_MARGIN_PX, STAGE_WIDTH_PX } from './types';
-import { AIR_DASH_FRAMES, KNOCKDOWN_FRAMES, MAX_FALL_SPEED, PUSH_HALF_W_PX, PUSH_HEIGHT_PX } from './constants';
+import {
+  AIR_DASH_FRAMES, KNOCKDOWN_FRAMES, LANDING_REBUFFER_FRAMES, MAX_FALL_SPEED, PUSH_HALF_W_PX, PUSH_HEIGHT_PX,
+} from './constants';
 import { emit, type SimContext } from './context';
-import { currentSlot } from './defs';
+import { currentMove, currentSlot } from './defs';
+import { BTN } from '../input/buttons';
+import { DIR_BTNS } from './moves';
 import { effStats } from './stats';
 import { restartAnim, setMode } from './anim';
 
@@ -43,6 +47,7 @@ function land(ctx: SimContext, f: FighterState): void {
     case 'attack': {
       const slot = currentSlot(f);
       if (slot && (slot.startsWith('air'))) {
+        rebufferLandedMove(ctx, f, slot);
         f.moveId = null;
         setMode(f, 'idle');
         f.vx = 0;
@@ -57,6 +62,26 @@ function land(ctx: SimContext, f: FighterState): void {
     default:
       break;
   }
+}
+
+const AIR_SLOT_BTN: Record<string, number> = { airLight: BTN.LIGHT, airHeavy: BTN.HEAVY, airSpecial1: BTN.SP1 };
+
+/**
+ * An air move pressed just before touching the ground would be eaten by the landing. If it started recently and
+ * hasn't done anything yet (not active, no ability fired), refund it and re-buffer its button so the ground version
+ * comes out on the next frame — a late jump-in press always produces an attack.
+ */
+function rebufferLandedMove(ctx: SimContext, f: FighterState, slot: string): void {
+  const m = currentMove(f);
+  const btn = AIR_SLOT_BTN[slot];
+  if (!m || !btn || f.moveFrame > LANDING_REBUFFER_FRAMES || f.moveFrame >= m.startup || f.moveConnect > 0) return;
+  const firstAbility = m.abilities?.length ? Math.min(...m.abilities.map((a) => a.frame)) : Infinity;
+  if (f.moveFrame >= firstAbility) return;
+  f.energy += m.energyCost;
+  delete f.cooldowns[m.id];
+  if (m.kind === 'special') f.stats.specialsUsed = Math.max(0, f.stats.specialsUsed - 1);
+  f.bufInput = btn | (ctx.inputs[f.index] & DIR_BTNS);
+  f.bufAge = 0;
 }
 
 export function integrate(ctx: SimContext, f: FighterState): void {

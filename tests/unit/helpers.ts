@@ -55,3 +55,58 @@ export function runBots(config: Partial<MatchConfig>, l0: BotLevel, l1: BotLevel
   }
   return { state: s, events, frames: f };
 }
+
+export interface MatchupResult {
+  a: string; b: string; n: number;
+  winsA: number; winsB: number; draws: number;
+  avgRoundSecs: number; maxFrames: number; unfinished: number;
+}
+
+/**
+ * Win-rate matrix method (docs/BALANCING.md §8): for every unordered pair of DIFFERENT characters play `n` seeded
+ * bot-vs-bot matches, alternating sides (P1/P2) every seed and cycling bot levels 1..3 (both bots same level).
+ */
+export function winMatrix(ids: string[], n: number, seed0 = 1, maxFrames = 40000): MatchupResult[] {
+  const out: MatchupResult[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const r: MatchupResult = { a: ids[i], b: ids[j], n, winsA: 0, winsB: 0, draws: 0, avgRoundSecs: 0, maxFrames: 0, unfinished: 0 };
+      let fightFrames = 0, rounds = 0;
+      for (let k = 0; k < n; k++) {
+        const seed = seed0 + k;
+        const [p1, p2] = k % 2 ? [ids[j], ids[i]] : [ids[i], ids[j]];
+        const lvl = ((k % 3) + 1) as BotLevel;
+        const m = runBots({ p1, p2, seed }, lvl, lvl, maxFrames, (s) => { if (s.phase === 'fight' && !s.cinematic.active) fightFrames++; });
+        rounds += m.state.roundWinners.length;
+        r.maxFrames = Math.max(r.maxFrames, m.frames);
+        if (m.state.phase !== 'matchEnd') r.unfinished++;
+        const w = m.state.winner;
+        if (w === 0 || w === 1) {
+          if (m.state.fighters[w].charId === ids[i]) r.winsA++; else r.winsB++;
+        } else r.draws++;
+      }
+      r.avgRoundSecs = fightFrames / Math.max(1, rounds) / 60;
+      out.push(r);
+    }
+  }
+  return out;
+}
+
+/** Markdown matrix: row character's win % against column character. */
+export function formatMatrix(ids: string[], res: MatchupResult[]): string {
+  const pct = (a: string, b: string) => {
+    const r = res.find((x) => (x.a === a && x.b === b) || (x.a === b && x.b === a));
+    if (!r) return '  -  ';
+    const w = r.a === a ? r.winsA : r.winsB;
+    return `${Math.round((w * 100) / r.n)}%`.padStart(5);
+  };
+  const lines = [`| vs | ${ids.join(' | ')} | overall |`, `|---|${ids.map(() => '---').join('|')}|---|`];
+  for (const a of ids) {
+    let w = 0, n = 0;
+    for (const r of res) {
+      if (r.a === a) { w += r.winsA; n += r.n; } else if (r.b === a) { w += r.winsB; n += r.n; }
+    }
+    lines.push(`| ${a} | ${ids.map((b) => (a === b ? '  -  ' : pct(a, b))).join(' | ')} | ${Math.round((w * 100) / Math.max(1, n))}% |`);
+  }
+  return lines.join('\n');
+}

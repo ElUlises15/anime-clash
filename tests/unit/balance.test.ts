@@ -40,6 +40,8 @@ describe('balance targets', () => {
   it.each([
     ['goku', [BTN.LIGHT, BTN.LIGHT, BTN.HEAVY, BTN.SP2]],
     ['naruto', [BTN.LIGHT, BTN.LIGHT, BTN.HEAVY, BTN.SP2]],
+    ['vegeta', [BTN.LIGHT, BTN.LIGHT, BTN.HEAVY, BTN.SP2]],
+    ['sasuke', [BTN.LIGHT, BTN.LIGHT, BTN.HEAVY, BTN.SP2]],
   ] as const)('%s BnB combo: 4+ hits for 15-25%% HP', (id, seq) => {
     const s = bnb(id, id === 'goku' ? 'naruto' : 'goku', [...seq]);
     const d = s.fighters[1];
