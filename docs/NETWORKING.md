@@ -1,85 +1,92 @@
-# Networking plan (Phase 2) — P2P WebRTC, host-authoritative input sync, rollback-ready
+# Networking (Phase 2) — P2P WebRTC, rollback netcode
 
-Decision (user, 2026-10-10): **P2P WebRTC** with a **public signaling server** (PeerJS cloud broker or equivalent; no
-backend of our own, no accounts), frontend on **GitHub Pages** under `/anime-clash/`, **hash routes** for rooms
-(`https://<user>.github.io/anime-clash/#/room/ABC123`) because Pages has no SPA rewrites. The room creator is the **host**.
+Online play is **peer-to-peer WebRTC** with **no backend of our own**: the free public **PeerJS cloud broker**
+(`0.peerjs.com`) is used only for signaling (exchanging SDP/ICE so the two browsers can find each other). After that, all
+game traffic goes directly browser ↔ browser over DataChannels. The site is static (GitHub Pages), rooms are hash routes:
+`https://elulises15.github.io/anime-clash/#/room/ABC234`. The room creator is the **host** (P1, left side).
 
-## Why this works with the Phase 1 sim
+## Modules (`src/networking/`)
 
-The sim (`src/game/sim`) is already built for lockstep/rollback:
-
-| Property | How Phase 1 guarantees it |
+| File | Role |
 |---|---|
-| Deterministic | Integer fixed-point (FX = 100 units/px), seeded xorshift RNG stored in `state.rng`, no `Math.random`/`Date`/floats accumulated in state, characters/abilities are pure data + pure functions. Unit test: same inputs → same `hashState` every frame for 3000+ frames. |
-| Tiny inputs | One `InputBits` (11 bits, fits in a `Uint16`) per player per frame (`src/game/input/buttons.ts`). DASH is resolved on the sending side (double tap / Shift), so only bits travel. |
-| Serializable state | `MatchState` is plain JSON (no classes/Maps). `sim.cloneState()` is a deep copy; JSON round-trip + continue gives an identical hash (tested). |
-| Desync detection | `sim.hashState(state)` = FNV-1a over a canonical serialization (32-bit). |
-| Render decoupled | Renderer/HUD/audio only *read* state + per-step `events`; re-simulating frames never touches Phaser. |
+| `types.ts` | CONTRACT: `PeerLink`, `TransportFactory`, `WireMessage`, `RoomWire/RoomSnapshot/RoomEvent`, `Room`, `NetSession*` types, `PROTOCOL_VERSION`. |
+| `peerjs.ts` | `PeerJsFactory` — real transport. Host registers peer id `animeclash-<CODE>`; guest opens two DataConnections: `rel` (reliable, ordered, JSON — lobby + snapshots) and `unrel` (`reliable:false`, raw binary — per-frame inputs). PeerJS is imported lazily so tests/node never load it. Signaling drop → `peer.reconnect()` (existing P2P links survive). |
+| `loopback.ts` | `LoopbackNetwork` — in-memory transport with configurable latency / jitter / loss and a **virtual clock** (`advance(ms)`) for deterministic tests. `?net=loopback` uses it in-page (dev only). |
+| `config.ts` | Reads `VITE_PEER_*` / `VITE_TURN_*`, builds PeerJS options + `iceServers` (Google + Cloudflare STUN, optional TURN). |
+| `roomCode.ts` | 6-char codes from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0/O/1/I/L), `normalizeRoomCode` (accepts code, URL or `#/room/x`), `parseRoomHash`, `roomUrl`. |
+| `room.ts` | `RoomSession` — lobby state machine (host authoritative). |
+| `netcode.ts` + `inputCodec.ts` | `NetSession` — in-match rollback netcode + binary packet codec. |
+| `index.ts` | `createOnlineRoom`, `joinOnlineRoom`, `getActiveRoom`, `clearActiveRoom`, `setTransportFactory`. |
 
-Sim API used by netcode (`src/game/sim/engine.ts`):
+UI: `src/ui/scenes/LobbyScene.ts` (code, copy link, both players' status, ping), `SelectScene` online mode (each player
+controls only their side with P1 keys), `PostMatchScene` online buttons, `src/ui/onlineOverlay.ts` (disconnect banner/modals),
+`src/ui/router.ts` (hash routes). `FightScene` drives the `NetSession` when `mode === 'online'`.
 
-```ts
-sim.createMatch(config: MatchConfig): MatchState     // both peers build it from the same {p1,p2,seed,mode:'online'}
-sim.step(state, [p1Bits, p2Bits]): MatchState         // advance exactly one 60 Hz frame (mutates + returns state)
-sim.cloneState(state): MatchState                     // snapshot for rollback ring buffer
-sim.hashState(state): number                          // desync check
-sim.rematch(state): MatchState
-```
-
-`FightScene` already isolates input gathering in `gatherInputs()` and the controller type `'remote'` exists in
-`FightSceneData.controllers`. Phase 2 replaces that method with a `NetSession`.
-
-## Topology & room flow
+## Room flow / state machine
 
 ```
-Host (creator)                          Public signaling (PeerJS broker)                Guest
-  CREATE ROOM -> code ABC123 ----------> register peer id "animeclash-ABC123"
-  URL #/room/ABC123 copied                                                      opens URL -> connect("animeclash-ABC123")
-  <==================== WebRTC DataChannel (unordered, maxRetransmits:0 for inputs; reliable channel for lobby) ====>
+host: idle → connecting → waiting ──guest hello──▶ selecting ⇄ ready(countdown 3 s) ──start──▶ fighting ──▶ postmatch
+                                                      ▲   changeFighter / returnToRoom   │  rematch (both) ──▶ fighting
+                                                      └───────────────────────────────────┘
+any phase with a guest: link drop ──▶ reconnecting (15 s window) ──guest back──▶ previous phase   | expiry ──▶ waiting (host) / closed (guest)
 ```
 
-* Room code: 6 chars from an unambiguous alphabet (no 0/O/1/I); peer id = `animeclash-<code>`. Collision → regenerate.
-* STUN: public Google/Cloudflare STUN. TURN: optional (configurable via `VITE_TURN_*` in `.env`, documented in `.env.example`); without TURN some symmetric-NAT pairs will fail — show a clear error.
-* Lobby messages (reliable channel, JSON): `hello{version,name}`, `select{charId}`, `ready{bool}`, `start{seed,p1,p2,frameDelay}`, `rematch`, `changeFighter`, `leave`, `ping{t}`/`pong{t}`.
-* The host decides `seed`, sides (host = P1), and the start frame. Version string must match (refuse otherwise).
+* Host keeps the authoritative `RoomWire` and broadcasts `{t:'room'}` after every change; the guest sends its actions.
+* READY requires a locked character. When both are READY the host waits the countdown, then sends `start` with
+  `MatchStart {matchId, seed, p1, p2, stage, inputDelay}`; both peers build the same match with `sim.createMatch`.
+* Input delay is chosen by the host from the measured RTT: ≤60 ms → 2 frames, ≤130 ms → 3, else 4.
+* Rematch: both press REMATCH → host sends a new `start` (new seed, `matchId+1`). CHANGE FIGHTER → both return to select
+  (chars cleared). RETURN TO ROOM → both return to the lobby (chars kept, READY cleared).
+* Disconnect: an explicit `leave` frees the guest slot immediately. A dropped link starts a **15 s reconnection window**:
+  the guest auto-redials every ~2 s; a fresh page opening the same `#/room/CODE` is also accepted as the returning guest.
+  If the match was running, the host sends `start` + `net:snapshot` (confirmed state + all inputs known after it) and the
+  guest resumes from there. If the **host** leaves, the room is closed (the peer id belongs to the host).
 
-## In-match protocol (host-authoritative input sync with prediction)
+### Reliable messages (JSON, `rel` channel)
+`hello{version,name,resume?}`, `welcome{room}`, `reject{reason}`, `room{room}`, `select{charId}`, `cursor{index}`,
+`ready{ready}`, `start{match}`, `rematch`, `changeFighter`, `returnToRoom`, `matchEnd{matchId,winner,frame,hash}`, `leave`,
+`ping{ts}`/`pong{ts}` (1 Hz, lobby RTT), `net:resyncReq{matchId,frame}`, `net:snapshot{matchId,frame,state,inputs,inputsFrom}`.
+Peers with a different `PROTOCOL_VERSION` are rejected.
 
-Each peer sends, every frame, a small binary packet on the unreliable channel:
-`[u8 type][u32 frame][u8 count][count × u16 inputs for frames frame-count+1..frame][u32 ackFrame][u32 hash@ackFrame?]`
-(redundancy: the last ~8 inputs are re-sent in every packet, so packet loss doesn't stall).
+### Input packet (binary, `unrel` channel, little endian) — sent every frame
+```
+u8 type=1 | u16 matchId | u32 startFrame | u8 count | count × u16 inputs | i32 ackFrame | u32 localFrame | u8 hasHash [u32 hashFrame u32 hash]
+```
+`inputs` = every local input the remote has not acked yet (≤ 32) → each packet carries redundant history, so packet loss
+doesn't stall. Typical packet: 20–40 bytes. Ping/pong: `u8 type(2|3) | f64 timestamp` every 500 ms → HUD ping slot.
+No sprites/state are ever streamed; only a full snapshot on resync/resume (~10 KB JSON, rare).
 
-1. **Input delay** `D` (2–3 frames, adaptive from RTT): local input for frame `f` is scheduled for frame `f + D`.
-2. **Prediction**: when the remote input for a frame hasn't arrived, repeat the last known remote input.
-3. **Rollback** (ready now, enable in Phase 2 or 2.1): keep a ring buffer of `cloneState` snapshots (~12 frames). When a
-   remote input arrives that differs from the prediction for frame `k`, restore snapshot `k`, re-step to the present with
-   corrected inputs (`step` is cheap: two fighters + few entities). Events produced during re-simulation are suppressed except
-   for those of the final frame (VFX/audio de-duplicated by `(type, frame, player)`).
-4. **Host authority**: the host's confirmed input stream is the canonical one. Every 30 frames the host sends
-   `hash(confirmedFrame)`; if the guest's hash differs it requests a **state resync**: host sends the JSON `MatchState` of a
-   confirmed frame (≈ 5–10 KB, compressed), guest replaces its state and re-simulates its unconfirmed frames.
-   Round/match results (KO, time-up, winner) are taken from the host.
-5. **Time sync**: guest adjusts its frame pacing ±1 frame per second to keep `localFrame - remoteFrame` close to `D`
-   (frame advantage balancing), avoiding drift.
-6. **Ping** shown in the HUD slot (`Hud.update(state, {ping})`).
+## Netcode: rollback (GGPO-style) on top of the deterministic sim
 
-If the first iteration ships without rollback (pure delay + prediction + periodic host resync), the sim API doesn't change.
+* **Input delay** `D` (2–4): local input sampled at frame L is applied at frame L+D.
+* **Two states**: `confirmedState` advances only through frames where both inputs are known (authoritative: hashes,
+  snapshots, match result); the **predicted state** (rendered) runs ahead using *last known remote input* as prediction.
+* **Rollback**: when a confirmed remote input differs from the prediction, `predicted = clone(confirmed)` and the
+  unconfirmed frames are re-simulated in the same tick (cheap: 2 fighters + few entities). Only the newest frame's events
+  feed VFX/audio.
+* **Prediction window**: at most 8 frames ahead of confirmed; beyond that the peer stalls (counted in `stats.stalls`).
+* **Time sync**: each packet carries the sender's frame; the peer that runs ahead (smoothed frame advantage > 1) skips one tick
+  at most every 10 ticks, so both clocks converge without drift.
+* **Desync detection**: the host includes `hash(confirmedState)` at every 30th confirmed frame in its packets; the guest compares
+  with its own and on mismatch requests a resync (rate-limited 1/s). The host's confirmed state + inputs replace the guest's.
+* **Authority**: KO/round/winner are read from `confirmedState`, so both screens show the same result; the host's match end is
+  the reference.
+* Target: 60–120 ms RTT feels local with D=2–3 and ≤ 3–5 frames of rollback.
 
-## Disconnects / reconnection
+Unit tests (`tests/unit/net/`): 3000-frame bot vs bot runs over the loopback transport at 0 ms, 50 ms+jitter+5 % loss and
+100 ms + 20 % loss with identical hashes at every common confirmed frame; desync injection → resync; mid-match resume on a new
+link; full match to `matchEnd` with the same winner; room create/join/ready/countdown/rematch/change fighter/return to room,
+version mismatch, room full, leave, drop → reconnect, reconnect window expiry, id collision retry.
 
-* Heartbeat via input packets; no packet for 1 s → "conexión inestable" banner and sim pauses (both sides) at the last
-  confirmed frame; 10 s → "rival desconectado" with RETURN TO ROOM.
-* Reconnect: guest re-opens the same room URL; host re-sends `start` + full state snapshot + input history since snapshot.
-* Host leaving ends the room (guest sees a message and can create a new room).
+## Configuration (`.env`, see `.env.example`)
 
-## Rematch / change fighter
+| Var | Default | |
+|---|---|---|
+| `VITE_PEER_HOST` / `PORT` / `PATH` / `SECURE` / `KEY` | `0.peerjs.com` / 443 / `/` / true / `peerjs` | Signaling server (self-host `peerjs-server` if the public one is down). |
+| `VITE_TURN_URL` / `USER` / `PASS` | empty | Optional TURN relay (comma separated URLs). |
 
-PostMatch buttons send lobby messages: `rematch` (both must press → host sends new `start` with a new seed),
-`changeFighter` (both return to the room's select screen), `RETURN TO ROOM` (room lobby, connection kept).
-
-## Tests planned for Phase 2
-
-* Two `NetSession`s connected through an in-memory transport with configurable latency/jitter/loss: both reach identical
-  hashes for a full bot-vs-bot match (incl. rollback paths).
-* Room create/join with a mocked signaling layer; disconnect + reconnect; rematch handshake.
-* Playwright: two browser contexts, host creates room, guest opens `#/room/CODE`, both pick + READY, fight runs, HP changes.
+STUN (`stun.l.google.com:19302`, `stun1.l.google.com:19302`, `stun.cloudflare.com:3478`) is always included.
+**Limits**: without TURN, pairs where both sides are behind symmetric NAT / strict corporate firewalls / some mobile CGNAT
+cannot connect (the join times out with a clear message). Configure a TURN server for those (values in `VITE_*` are public in
+the bundle → use restricted/short-lived credentials). The public PeerJS broker is best-effort (no SLA); if `animeclash-CODE`
+is still registered after a host reload, a new code is generated.
