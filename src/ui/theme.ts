@@ -41,9 +41,9 @@ export const FONT_BODY = '"Arial Black", Impact, Arial, sans-serif';
 export const FONT_UI = 'Arial, Helvetica, sans-serif';
 
 export const DEPTH = {
-  bg: 0,
-  bgFx: 2,
-  panel: 10,
+  bg: -30,
+  bgFx: -26,
+  panel: -10,
   content: 20,
   fx: 40,
   hud: 200,
