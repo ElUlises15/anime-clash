@@ -32,7 +32,7 @@ test('title -> local vs -> select both -> fight with QA bots -> HP changes, no c
   await key(page, 'ArrowDown'); // ONLINE -> LOCAL VS
   await key(page, 'Enter');
   await waitScene(page, 'Select');
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(2500); // cold start: first visit lazily loads sprite atlases
   await key(page, 'KeyJ'); // P1 confirms hovered fighter
   await key(page, 'ArrowRight'); // P2 moves cursor
   await key(page, 'Comma'); // P2 confirms
