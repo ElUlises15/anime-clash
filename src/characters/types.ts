@@ -34,7 +34,9 @@ export interface DerivedStats {
 
 export type MoveSlot =
   | 'light' | 'light2' | 'heavy' | 'crouchLight' | 'crouchHeavy' | 'airLight' | 'airHeavy'
-  | 'special1' | 'special2' | 'ultimate' | 'airSpecial1';
+  | 'special1' | 'special2' | 'ultimate' | 'airSpecial1'
+  /** Command variants: DOWN + special button. */
+  | 'special1Down' | 'special2Down';
 
 export type HitLevel = 'mid' | 'low' | 'high' | 'overhead' | 'unblockable';
 
