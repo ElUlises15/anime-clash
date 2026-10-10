@@ -28,6 +28,6 @@ export class Rig {
  this.parts.head.setTint(p.face==='hurt'?0xffc4b0:0xffffff);
  }
  tint(color:number){for(const key in this.parts)this.parts[key].setTintFill(color);}
- clearTint(){for(const key in this.parts)this.parts[key].setTint(key.includes('Back')?0xb6b8c7:0xffffff);}
+ clearTint(){for(const key in this.parts)this.parts[key].clearTint().setTint(key.includes('Back')?0xb6b8c7:0xffffff);}
  destroy(){this.container.destroy();}
 }

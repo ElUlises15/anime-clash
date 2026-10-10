@@ -1,7 +1,7 @@
 import type { CharacterVisuals } from '../../../render/rig/types';
 export const visuals: CharacterVisuals = {
  family: 'standard', heightPx: 242,
- palette: { skin:'#f7c69f',skinShade:'#cf8e72',hair:'#171d2b',hairShade:'#080d18',hairHighlight:'#354053',eyes:'#242938',top:'#f98527',topShade:'#bd431f',undershirt:'#172d58',belt:'#193b70',pants:'#ef7926',pantsShade:'#b84423',boots:'#244775',bootsShade:'#142541',wrist:'#294d86',accent:'#facc56',outline:'#151827',aura:'#ffe779' },
+ palette: { skin:'#f7c69f',skinShade:'#cf8e72',hair:'#171d2b',hairShade:'#080d18',hairHighlight:'#354053',eyes:'#242938',top:'#e96919',topShade:'#bd431f',undershirt:'#174b91',belt:'#193b70',pants:'#e5661d',pantsShade:'#b84423',boots:'#244775',bootsShade:'#142541',wrist:'#294d86',accent:'#facc56',outline:'#151827',aura:'#ffe779' },
  hair: {locks:[[[-1,.15],[-1.95,-.75],[-1.05,-.8],[-1.85,-1.75],[-.75,-1.3],[-.85,-2.45],[-.15,-1.55],[.35,-2.75],[.65,-1.55],[1.65,-2.15],[1.2,-1.05],[2,-1.2],[1.5,-.3],[1,.25]]],bangs:[[[-1,-.8],[-.2,-.85],[-.55,.1]],[[-.2,-1],[.45,-.8],[.15,.05]],[[.4,-.8],[1,-.65],[.65,.05]]] },
  accessories: [{kind:'symbol',color:'#fff1cf'},{kind:'wristbands',color:'#294d86'}],
  forms:{ssj:{hair:{locks:[[[-1,.1],[-1.7,-1.2],[-.9,-1],[-1.1,-2.6],[-.3,-1.6],[.1,-3],[.55,-1.8],[1.1,-2.7],[1,-1.1],[1.7,-1.5],[1.2,.1]]],bangs:[[[-.9,-.8],[-.1,-.7],[-.5,0]],[[.1,-.7],[.8,-.9],[.5,0]]]},palette:{hair:'#ffe65c',hairShade:'#d99b27',hairHighlight:'#fff9bb',eyes:'#4ecbb9',aura:'#ffe66c'},aura:true}},
