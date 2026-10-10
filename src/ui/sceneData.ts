@@ -1,5 +1,6 @@
 /** CONTRACT FILE — data passed between Phaser scenes. */
 import type { MatchStats, PlayerIndex } from '../game/sim/types';
+import type { MatchStart, ResumeData } from '../networking/types';
 
 export const SCENES = {
   Boot: 'Boot',
@@ -8,11 +9,20 @@ export const SCENES = {
   Select: 'Select',
   Fight: 'Fight',
   PostMatch: 'PostMatch',
+  /** Phase 2: online room lobby (code, share link, both players' status, ping). */
+  Lobby: 'Lobby',
 } as const;
 
 export type GameMode = 'versus' | 'training' | 'online';
 
 export interface SelectSceneData { mode: GameMode }
+
+/** Phase 2: data for the online Lobby scene. The live Room object comes from getActiveRoom() (src/networking). */
+export interface LobbySceneData {
+  /** 'create' = register a new room as host; 'join' = dial `code`; 'resume' = show the already active room. */
+  action: 'create' | 'join' | 'resume';
+  code?: string;
+}
 
 export interface FightSceneData {
   mode: GameMode;
@@ -23,6 +33,8 @@ export interface FightSceneData {
   seed?: number;
   /** Testing hook: both sides driven by QA bot. */
   autoplay?: boolean;
+  /** Phase 2 online: match config from the host (seed, chars, input delay) and optional resume snapshot. */
+  online?: { match: MatchStart; resume?: ResumeData };
 }
 
 export interface MatchResult {
