@@ -17,7 +17,7 @@ export const START_OFFSET_PX = 280;
 
 /** Push box (px): half width and height. Fighters can't overlap unless one is this high above the other. */
 export const PUSH_HALF_W_PX = 36;
-export const PUSH_HEIGHT_PX = 185;
+export const PUSH_HEIGHT_PX = 240;
 
 export const HITSTOP = { light: 6, heavy: 10, special: 12, ultimate: 16 } as const;
 export const KO_HITSTOP = 30;

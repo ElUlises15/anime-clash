@@ -27,10 +27,10 @@ export function spawnAoe(ctx: SimContext, owner: PlayerIndex, moveId: string, x:
 export const aoe: Ability = {
   type: 'aoe',
   trigger(ctx, owner, p, move) {
-    let pt = ownerPoint(owner, p, 'offsetX', 'offsetY', 0, 90);
+    let pt = ownerPoint(owner, p, 'offsetX', 'offsetY', 0, 116);
     if (str(p, 'at', 'self') === 'opponent') {
       const o = foe(ctx.state, owner);
-      pt = { x: o.x, y: o.y + num(p, 'offsetY', 90) * FX };
+      pt = { x: o.x, y: o.y + num(p, 'offsetY', 116) * FX };
     }
     spawnAoe(ctx, owner.index, move.id, pt.x, pt.y, owner.facing, { visual: move.vfx ?? 'explosion', ...p });
   },

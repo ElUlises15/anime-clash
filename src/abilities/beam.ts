@@ -52,7 +52,7 @@ export function beamLength(ctx: SimContext, e: EntityState, reach: number): numb
 export const beam: Ability = {
   type: 'beam',
   trigger(ctx, owner, p, move) {
-    const at = ownerPoint(owner, p, 'offsetX', 'offsetY', 50, 115);
+    const at = ownerPoint(owner, p, 'offsetX', 'offsetY', 50, 148);
     const visual = visualOf(p, move, 'kamehameha');
     const grow = num(p, 'growSpeed', 60);
     const e = spawnEntity(ctx, {
@@ -61,7 +61,7 @@ export const beam: Ability = {
       life: num(p, 'duration', 40), hitsLeft: num(p, 'hits', 6), power: num(p, 'power', 3),
       data: {
         ...hitData(p), interval: num(p, 'interval', 6), length: grow, reach: grow, maxLength: num(p, 'maxLength', 900),
-        grow, offsetX: num(p, 'offsetX', 50), offsetY: num(p, 'offsetY', 115),
+        grow, offsetX: num(p, 'offsetX', 50), offsetY: num(p, 'offsetY', 148),
       },
     });
     e.w = beamLength(ctx, e, grow);

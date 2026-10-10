@@ -128,7 +128,7 @@ export function checkRoundOver(ctx: SimContext): void {
       f.vy = Math.max(f.vy, 1100);
       f.grounded = false;
       if (f.y <= 0) f.y = 1;
-      emit(ctx, { type: 'ko', player: killer.index, x: f.x, y: f.y + 100 * FX });
+      emit(ctx, { type: 'ko', player: killer.index, x: f.x, y: f.y + 130 * FX });
     }
     return;
   }

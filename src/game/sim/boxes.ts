@@ -11,9 +11,9 @@ export interface Rect { x: number; y: number; w: number; h: number }
 
 /** Hurtbox sizes in px (relative to feet center). */
 export const HURT = {
-  stand: { w: 70, h: 225 },
-  crouch: { w: 80, h: 140 },
-  air: { w: 66, h: 180, y: 20 },
+  stand: { w: 76, h: 290 },
+  crouch: { w: 86, h: 180 },
+  air: { w: 72, h: 232, y: 26 },
   lying: { w: 170, h: 45 },
 } as const;
 

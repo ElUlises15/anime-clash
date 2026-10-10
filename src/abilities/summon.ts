@@ -26,7 +26,7 @@ export const summon: Ability = {
       const x = clampX(owner.x + owner.facing * (num(p, 'offsetX', 30) - i * num(p, 'spacing', 50)) * FX);
       spawnEntity(ctx, {
         kind: 'summon', owner: owner.index, abilityType: 'summon', moveId: move.id, visual,
-        x, y: 0, facing: owner.facing, w: num(p, 'w', 60), h: num(p, 'h', 180),
+        x, y: 0, facing: owner.facing, w: num(p, 'w', 60), h: num(p, 'h', 232),
         life: num(p, 'life', 150), hitsLeft: 1, power: 0,
         data: {
           ...hitData(p), phase: 'run', t: 0, delay: i * num(p, 'delayStep', 10), speed: num(p, 'speed', 11),
@@ -55,7 +55,7 @@ export const summon: Ability = {
       case 'windup': {
         if ((d.t as number) < (d.windup as number)) return;
         setAnim(e, 'heavy');
-        const hb = relBoxFx(e.x, e.y, e.facing, { x: 0, y: 60, w: (d.attackRange as number) + 30, h: 90 });
+        const hb = relBoxFx(e.x, e.y, e.facing, { x: 0, y: 77, w: (d.attackRange as number) + 30, h: 116 });
         const hu = hurtboxFx(o);
         if (e.hitsLeft > 0 && strikeOpposingEntities(ctx, e.owner, hb, specFromEntity(ctx, e), e)) {
           e.hitsLeft = 0; // absorbed (e.g. by a shield)
