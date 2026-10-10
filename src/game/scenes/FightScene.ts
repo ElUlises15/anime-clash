@@ -36,6 +36,7 @@ const ONLINE_MAX_STEPS_PER_FRAME = 12;
 /** Online: if the render loop hasn't run for this long (tab hidden, long stall) a timer keeps stepping + sending inputs. */
 const PUMP_STALL_MS = 200;
 const PERF_SAMPLES = 1800;
+const ABILITY_EVENTS = new Set<string>(['specialStart', 'projectileSpawn', 'beamStart', 'aoe', 'teleport', 'summon', 'trapSet', 'transform', 'shield', 'buff']);
 const DUMMY_MODES: (DummyMode | 'bot')[] = ['idle', 'block', 'jump', 'crouch', 'bot'];
 const DUMMY_LABEL: Record<string, string> = { idle: 'QUIETO', block: 'BLOQUEA', jump: 'SALTA', crouch: 'AGACHADO', bot: 'BOT QA' };
 
@@ -396,7 +397,7 @@ export class FightScene extends Phaser.Scene {
     if (t.advanced) {
       this.stepsTotal++;
       for (const ev of t.events) {
-        if (ev.type === 'specialStart') this.abilityCount.specials++;
+        if (ABILITY_EVENTS.has(ev.type)) this.abilityCount.specials++;
         else if (ev.type === 'ultimateStart') this.abilityCount.ultimates++;
       }
       // VFX/audio only from the newest displayed frame (never from rollback re-simulation, never from the stall pump).

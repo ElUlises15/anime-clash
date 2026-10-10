@@ -194,6 +194,6 @@ export interface NetStats {
 /** Result of one fixed 60 Hz tick of the online session. */
 export interface NetTick {
   advanced: boolean; // false = stalled (waiting for remote inputs or time-sync skip)
-  events: SimEvent[]; // events of the newest simulated frame (for VFX/audio); [] when not advanced
+  events: SimEvent[]; // events not yet reported (newest frame + ones revealed by rollback), deduplicated; for VFX/audio
   rolledBack: number; // frames re-simulated this tick
 }

@@ -77,6 +77,9 @@ export class NetSession {
   private hostHash: { frame: number; hash: number } | null = null; // guest: latest received from host
   private lastComparedFrame = -1;
   private lastResyncReqAt = -Infinity;
+  /** Event keys already handed to the renderer, per predicted frame (so a rollback re-emits only what's new). */
+  private shownEvents = new Map<number, Set<string>>();
+  private outEvents: SimEvent[] = [];
   private pendingSnapshot: Extract<WireMessage, { t: 'net:snapshot' }> | null = null;
 
   constructor(opts: NetSessionOptions) {
@@ -127,6 +130,7 @@ export class NetSession {
     this.predicted = this.confirmed; // replaced by resimulate()
     this.advanceConfirmed();
     this.resimulate();
+    this.outEvents = []; // frames before the first tick were never "shown"; don't replay them
     this.syncStats();
     this.subscribe(this.link);
   }
@@ -150,7 +154,6 @@ export class NetSession {
     this.updateAdvantage();
 
     let advanced = false;
-    let events: SimEvent[] = [];
     this.ticksSinceSkip++;
     const predictionStall = this.localFrame - this.confirmedFrame >= this.maxPrediction;
     const syncSkip = !predictionStall && this.advantage > TIME_SYNC_THRESHOLD && this.ticksSinceSkip >= TIME_SYNC_MIN_GAP;
@@ -162,7 +165,6 @@ export class NetSession {
       if (!this.localInputs.has(target)) this.localInputs.set(target, localBits | 0);
       this.stepPredicted();
       advanced = true;
-      events = this.predicted.events;
       // remote inputs may already cover the new frame
       this.advanceConfirmed();
     }
@@ -175,6 +177,10 @@ export class NetSession {
       this.stats.resimFrames! += rolledBack;
     }
     this.stats.maxTickMs = Math.max(this.stats.maxTickMs!, this.now() - t0);
+    // Events of the new frame + events a rollback revealed (e.g. the remote's special) that were never shown. Rendering
+    // never runs inside re-simulation; the caller gets one deduplicated batch per tick.
+    const events = this.outEvents;
+    this.outEvents = [];
     return { advanced, events, rolledBack };
   }
 
@@ -237,6 +243,17 @@ export class NetSession {
     this.predictedRemote.set(f, r);
     this.simStep(this.predicted, this.pair(this.localInputs.get(f) ?? 0, r));
     this.localFrame++;
+    const evs = this.predicted.events;
+    if (evs.length) {
+      let shown = this.shownEvents.get(f);
+      if (!shown) { shown = new Set(); this.shownEvents.set(f, shown); }
+      for (const e of evs) {
+        const key = `${e.type}|${e.player}|${e.moveId ?? ''}|${e.visual ?? ''}`;
+        if (shown.has(key)) continue;
+        shown.add(key);
+        this.outEvents.push(e);
+      }
+    }
   }
 
   /** Rebuild the predicted state from confirmed up to localFrame. Returns frames simulated. */
@@ -423,6 +440,7 @@ export class NetSession {
       for (const f of map.keys()) if (f < min) map.delete(f);
     }
     for (const f of this.predictedRemote.keys()) if (f < this.confirmedFrame) this.predictedRemote.delete(f);
+    for (const f of this.shownEvents.keys()) if (f < this.confirmedFrame) this.shownEvents.delete(f);
   }
 
   private syncStats(): void {
