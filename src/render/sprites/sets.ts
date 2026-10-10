@@ -63,8 +63,8 @@ const KEY_POSE_CLIPS: Partial<Record<AnimKey, SpriteClip>> = {
 /** Clips for sets that also have the phase-2 animation sheets (walk_*, light_*, heavy_*, air_*, low_*, moves_*). */
 const FULL_CLIPS: Partial<Record<AnimKey, SpriteClip>> = {
   ...KEY_POSE_CLIPS,
-  walkFwd: { mode: 'loop', frames: ['walk_0', 'walk_1', 'walk_2', 'walk'], fps: 8, motion: 'walk' },
-  walkBack: { mode: 'loop', frames: ['walk_0', 'walk_1', 'walk_2', 'walk'], fps: 7, motion: 'walk', reverse: true },
+  walkFwd: { mode: 'loop', frames: ['walk_0', 'walk_1', 'walk_2'], fps: 7, motion: 'walk' },
+  walkBack: { mode: 'loop', frames: ['walk_0', 'walk_1', 'walk_2'], fps: 6, motion: 'walk', reverse: true },
   jump: { mode: 'hold', frames: ['air_0'] },
   fall: { mode: 'hold', frames: ['air_1'] },
   light: { mode: 'move', startup: ['light_0'], active: ['light_1'], recovery: ['light_2', 'light_3'], motion: 'lunge' },
@@ -124,15 +124,17 @@ SPRITE_SETS.vegeta = {
     ultimate: { mode: 'move', startup: ['moves_3'], active: ['ultimate'], recovery: ['ultimate', 'idle'] },
   },
 };
+/** Sasuke: 12 key poses only (animation sheets hit the Codex usage limit) -> key-pose clips + procedural motion. */
 SPRITE_SETS.sasuke = {
   id: 'sasuke', atlas: 'sasuke', bust: 'sasuke_bust',
   clips: {
-    ...FULL_CLIPS,
-    projectile: { mode: 'move', startup: ['moves_0'], active: ['moves_1'], recovery: ['moves_1', 'idle'], motion: 'lunge' },
-    special1: { mode: 'move', startup: ['moves_0'], active: ['moves_0'], recovery: ['idle'] },
-    special2: { mode: 'move', startup: ['special'], active: ['moves_2'], recovery: ['moves_2', 'idle'], motion: 'lunge' },
-    counter: { mode: 'hold', frames: ['moves_3'] },
-    ultimate: { mode: 'move', startup: ['moves_3'], active: ['ultimate'], recovery: ['ultimate'] },
+    ...KEY_POSE_CLIPS,
+    projectile: { mode: 'move', startup: ['idle'], active: ['light'], recovery: ['light', 'idle'], motion: 'lunge' },
+    special1: { mode: 'move', startup: ['crouch'], active: ['special'], recovery: ['special', 'idle'], motion: 'lunge' },
+    special2: { mode: 'move', startup: ['crouch'], active: ['special'], recovery: ['special', 'idle'], motion: 'lunge' },
+    counter: { mode: 'hold', frames: ['block'] },
+    ultimate: { mode: 'move', startup: ['victory'], active: ['ultimate'], recovery: ['ultimate'] },
+    dash: { mode: 'hold', frames: ['special'] },
   },
 };
 
