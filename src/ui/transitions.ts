@@ -12,6 +12,10 @@ type Payload = object | undefined;
 export function goTo(from: Phaser.Scene, target: string, data?: Payload, kind: 'slash' | 'wipe' = 'slash'): void {
   if ((from as unknown as { __uiLeaving?: boolean }).__uiLeaving) return;
   (from as unknown as { __uiLeaving?: boolean }).__uiLeaving = true;
+  // Scene instances are reused by Phaser: clear the guard when this scene shuts down so it can leave again later.
+  from.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+    (from as unknown as { __uiLeaving?: boolean }).__uiLeaving = false;
+  });
   const run = () => {
     try {
       from.scene.start(target, data);
