@@ -3,38 +3,53 @@ import type { DataConnection } from 'peerjs';
 import type { HostEndpoint, NetError, PeerLink, TransportFactory, WireMessage } from './types';
 import { getPeerOptions } from './config';
 import { peerIdFor } from './roomCode';
+import { logClose, logWarning } from './diag';
 
 function netError(error: { type?: string; message?: string }): NetError {
   const kind = error.type === 'unavailable-id' ? 'id-taken' : error.type === 'peer-unavailable' ? 'peer-unavailable'
     : error.type === 'network' ? 'network' : error.type === 'webrtc' ? 'webrtc' : 'signaling';
   return { kind, message: kind === 'peer-unavailable' ? 'Room not found' : error.message || 'Connection failed' };
 }
+/** A link is declared dead only after this long without ANY data from the peer (room pings flow at 1 Hz, inputs at 60 Hz). */
+export const LINK_SILENCE_MS = 8000;
+const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
 class WebRtcLink implements PeerLink {
   private closed = false;
   private rel = new Set<(m: WireMessage) => void>();
   private unrel = new Set<(d: Uint8Array) => void>();
   private closes = new Set<(reason: string) => void>();
-  private iceTimers = new Map<DataConnection, ReturnType<typeof setTimeout>>();
   private pendingReliable: WireMessage[];
+  private lastRecvAt = now();
+  private watchdog: ReturnType<typeof setInterval>;
   readonly id: string;
   constructor(private reliable: DataConnection, private unreliable: DataConnection, private cleanup: () => void = () => {}, pendingReliable: WireMessage[] = []) {
     this.pendingReliable = pendingReliable;
     this.id = reliable.connectionId + ':' + unreliable.connectionId;
     reliable.on('data', data => {
+      this.lastRecvAt = now();
       if (!data || typeof data !== 'object' || typeof (data as WireMessage).t !== 'string') return;
       if (this.rel.size === 0) { if (this.pendingReliable.length < 32) this.pendingReliable.push(data as WireMessage); }
       else for (const cb of this.rel) cb(data as WireMessage);
     });
-    unreliable.on('data', data => { void this.receiveBinary(data); });
+    unreliable.on('data', data => { this.lastRecvAt = now(); void this.receiveBinary(data); });
     for (const connection of [reliable, unreliable]) {
-      connection.on('close', () => this.finish('Connection closed'));
-      connection.on('error', e => this.finish(e.message));
+      const label = connection.label;
+      // Only a real channel close is fatal. PeerJS 'error' events are often transient (MessageToBig, NotOpenYet, a send
+      // racing a close, ICE negotiation noise); when the channel really dies PeerJS also emits 'close'.
+      connection.on('close', () => this.finish(`Connection closed (${label})`));
+      connection.on('error', e => { logWarning('dc-error', `${label}: ${(e as { type?: string }).type ?? ''} ${e.message}`); console.warn(`[net] ${label} channel error (non-fatal):`, e.message); });
       connection.on('iceStateChanged', state => {
-        if (state === 'failed' || state === 'closed') this.finish('ICE connection failed');
-        else if (state === 'disconnected' && !this.iceTimers.has(connection)) this.iceTimers.set(connection, setTimeout(() => this.finish('ICE disconnected'), 3000));
-        else if (state === 'connected' || state === 'completed') { clearTimeout(this.iceTimers.get(connection)); this.iceTimers.delete(connection); }
+        if (state === 'failed' || state === 'closed') this.finish(`ICE ${state} (${label})`);
+        // 'disconnected' is frequently a short blip (WiFi hiccup, consent-check loss) that recovers on its own. The silence
+        // watchdog below decides; we never close on it while packets still arrive.
+        else if (state === 'disconnected') logWarning('ice-disconnected', label);
       });
     }
+    this.watchdog = setInterval(() => {
+      const silent = now() - this.lastRecvAt;
+      if (silent > LINK_SILENCE_MS) this.finish(`No data from peer for ${Math.round(silent / 1000)} s`);
+    }, 1000);
   }
   private async receiveBinary(data: unknown): Promise<void> {
     let bytes: Uint8Array;
@@ -42,14 +57,20 @@ class WebRtcLink implements PeerLink {
     else if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
     else if (ArrayBuffer.isView(data)) bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     else if (typeof Blob !== 'undefined' && data instanceof Blob) {
-      try { bytes = new Uint8Array(await data.arrayBuffer()); } catch { this.finish('Invalid binary payload'); return; }
+      try { bytes = new Uint8Array(await data.arrayBuffer()); } catch { logWarning('bad-payload', 'blob read failed'); return; }
     }
     else return;
     if (!this.closed) for (const cb of this.unrel) cb(bytes);
   }
   get open(): boolean { return !this.closed && this.reliable.open && this.unreliable.open; }
-  sendReliable(msg: WireMessage): void { if (this.open) this.reliable.send(msg); }
-  sendUnreliable(data: Uint8Array): void { if (this.open) this.unreliable.send(new Uint8Array(data).buffer); }
+  sendReliable(msg: WireMessage): void {
+    if (!this.open) return;
+    try { this.reliable.send(msg); } catch (e) { logWarning('send-failed', `rel ${msg.t}: ${(e as Error).message}`); }
+  }
+  sendUnreliable(data: Uint8Array): void {
+    if (!this.open) return;
+    try { this.unreliable.send(new Uint8Array(data).buffer); } catch (e) { logWarning('send-failed', `unrel: ${(e as Error).message}`); }
+  }
   onReliable(cb: (m: WireMessage) => void) {
     this.rel.add(cb);
     if (this.pendingReliable.length) {
@@ -64,7 +85,8 @@ class WebRtcLink implements PeerLink {
   private finish(reason: string): void {
     if (this.closed) return;
     this.closed = true;
-    for (const timer of this.iceTimers.values()) clearTimeout(timer); this.iceTimers.clear();
+    clearInterval(this.watchdog);
+    if (reason !== 'Closed by local peer') logClose('link', reason);
     this.reliable.close(); this.unreliable.close(); this.cleanup();
     for (const cb of [...this.closes]) cb(reason);
     this.rel.clear(); this.unrel.clear(); this.closes.clear();

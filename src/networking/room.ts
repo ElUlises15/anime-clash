@@ -1,6 +1,7 @@
 import { PROTOCOL_VERSION, RECONNECT_WINDOW_MS } from './types';
 import type { HostEndpoint, MatchStart, NetError, PeerLink, PlayerSlot, ResumeData, Room, RoomEvent, RoomPhase, RoomSnapshot, RoomWire, TransportFactory, WireMessage } from './types';
 import type { PlayerIndex } from '../game/sim/types';
+import { logClose, netDiag } from './diag';
 import { generateRoomCode, normalizeRoomCode, roomUrl } from './roomCode';
 
 export interface RoomTimers {
@@ -25,6 +26,8 @@ const failure = (kind: NetError['kind'], message: string): NetError => ({ kind, 
 
 export class RoomSession implements Room {
   resumeProvider: (() => ResumeData | null) | null = null;
+  /** TEST ONLY (host): matches started from now on carry MatchStart.testMeter (e2e ability-spam stress). */
+  testMeter = false;
   private state: RoomWire;
   private currentLink: PeerLink | null = null;
   private endpoint: HostEndpoint | null = null;
@@ -225,7 +228,7 @@ export class RoomSession implements Room {
     this.countdown = this.later(this.countdownMs, () => { this.countdown = undefined; if (this.state.phase === 'ready' && this.state.players.every(p => p.ready && p.connected)) this.startMatch(); });
   }
   private startMatch(): void {
-    const match: MatchStart = { matchId: ++this.state.matchCount, seed: Math.floor(this.rand() * 0x80000000) >>> 0, p1: this.state.players[0].charId!, p2: this.state.players[1].charId!, stage: 'arena', inputDelay: this.ping === null ? 3 : this.ping <= 60 ? 2 : this.ping <= 130 ? 3 : 4 };
+    const match: MatchStart = { matchId: ++this.state.matchCount, seed: Math.floor(this.rand() * 0x80000000) >>> 0, p1: this.state.players[0].charId!, p2: this.state.players[1].charId!, stage: 'arena', inputDelay: this.ping === null ? 3 : this.ping <= 60 ? 2 : this.ping <= 130 ? 3 : 4, ...(this.testMeter ? { testMeter: true } : {}) };
     this.state.match = match; this.state.phase = 'fighting'; this.state.lastWinner = null;
     for (const p of this.state.players) p.rematch = false;
     this.changed(true); this.currentLink?.sendReliable({ t: 'start', match });
@@ -239,6 +242,7 @@ export class RoomSession implements Room {
       if (this.role === 'guest') { this.cancel(this.retryTimer); this.retryTimer = this.later(2000, () => { void this.retry(); }); }
       return;
     }
+    netDiag.reconnects++; logClose('room-reconnecting', `${this.state.phase}: ${reason}`);
     this.beforeDrop = this.state.phase; this.state.phase = 'reconnecting'; this.state.players[this.me === 0 ? 1 : 0].connected = false;
     this.cancel(this.countdown); this.countdown = undefined;
     this.deadline = this.now() + RECONNECT_WINDOW_MS;

@@ -56,7 +56,16 @@ function threat(state: MatchState, f: FighterState, o: FighterState): MoveDef['l
   return null;
 }
 
-export function createBot(seed: number, level: BotLevel = 2): Bot {
+export interface BotOptions {
+  /** Stress mode (e2e netcode tests): throw specials/ultimates whenever affordable. */
+  spam?: boolean;
+}
+
+const SPAM_SLOTS: [MoveSlot, InputBits][] = [
+  ['special1', BTN.SP1], ['special2', BTN.SP2], ['special1Down', BTN.DOWN | BTN.SP1], ['special2Down', BTN.DOWN | BTN.SP2],
+];
+
+export function createBot(seed: number, level: BotLevel = 2, opts: BotOptions = {}): Bot {
   const L = LEVEL[level];
   return {
     next(state: MatchState, me: PlayerIndex): InputBits {
@@ -109,6 +118,16 @@ export function createBot(seed: number, level: BotLevel = 2): Bot {
         if (dist > 300 && usable(f, 'airSpecial1') && rnd(7) < 250) return press(f, BTN.SP1);
         if (f.airActions === 0 && f.vy < 200 && rnd(8) < 150) return press(f, rnd(9) < 500 ? BTN.UP : BTN.DASH) | fwd;
         return 0;
+      }
+
+      // --- stress: abilities first ---
+      if (opts.spam && f.grounded && (f.mode === 'idle' || f.mode === 'walk' || f.mode === 'crouch')) {
+        if (moveOf(f, 'ultimate') && f.ult >= ULT_MAX) return press(f, BTN.ULT);
+        const start = rnd(20) % SPAM_SLOTS.length;
+        for (let i = 0; i < SPAM_SLOTS.length; i++) {
+          const [slot, bits] = SPAM_SLOTS[(start + i) % SPAM_SLOTS.length];
+          if (usable(f, slot) && rnd(21 + i) < 700) return (bits & BTN.DOWN) | press(f, bits & ~BTN.DOWN);
+        }
       }
 
       // --- ultimate ---

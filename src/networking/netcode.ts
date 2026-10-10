@@ -15,6 +15,7 @@
 import type { InputBits } from '../game/input/buttons';
 import { sim } from '../game/sim/engine';
 import type { MatchState, PlayerIndex, SimEvent } from '../game/sim/types';
+import { ENERGY_MAX, ULT_MAX } from '../game/sim/types';
 import { decodePacket, encodeInputs, encodePing, encodePong, MAX_PACKET_INPUTS, type InputsPacket } from './inputCodec';
 import type { MatchStart, NetSessionOptions, NetStats, NetTick, PeerLink, ResumeData, WireMessage } from './types';
 
@@ -68,6 +69,7 @@ export class NetSession {
   private lastPingAt = -Infinity;
   private rtt: number | null = null;
   private lastPacketAt: number;
+  private gotPacket = false;
 
   // desync detection
   private latestHash: { frame: number; hash: number } | null = null; // host: latest confirmed hash
@@ -91,7 +93,7 @@ export class NetSession {
     this.lastPacketAt = this.now();
     this.stats = {
       ping: null, inputDelay: this.delay, rollbacks: 0, maxRollback: 0, stalls: 0, desyncs: 0, resyncs: 0,
-      confirmedFrame: 0, remoteFrame: -1, localFrame: 0,
+      confirmedFrame: 0, remoteFrame: -1, localFrame: 0, maxTickMs: 0, maxResimMs: 0, maxPacketGapMs: 0, resimFrames: 0,
     };
 
     const r = opts.resume;
@@ -139,9 +141,11 @@ export class NetSession {
   get frame(): number { return this.localFrame; }
 
   tick(localBits: InputBits): NetTick {
+    const t0 = this.now();
     let rolledBack = 0;
     if (this.pendingSnapshot) rolledBack += this.applySnapshot(this.pendingSnapshot);
     if (this.remoteDirty) rolledBack += this.processRemote();
+    if (rolledBack > 0) this.stats.maxResimMs = Math.max(this.stats.maxResimMs!, this.now() - t0);
     this.maybePing();
     this.updateAdvantage();
 
@@ -168,7 +172,9 @@ export class NetSession {
     if (rolledBack > 0) {
       this.stats.rollbacks++;
       this.stats.maxRollback = Math.max(this.stats.maxRollback, rolledBack);
+      this.stats.resimFrames! += rolledBack;
     }
+    this.stats.maxTickMs = Math.max(this.stats.maxTickMs!, this.now() - t0);
     return { advanced, events, rolledBack };
   }
 
@@ -213,6 +219,14 @@ export class NetSession {
     return this.remoteInputs.get(this.remoteContig - 1) ?? 0;
   }
 
+  /** sim.step + the (test-only, deterministic, state-derived) meter top-up applied identically on both peers. */
+  private simStep(state: MatchState, inputs: [InputBits, InputBits]): void {
+    sim.step(state, inputs);
+    if (this.match.testMeter && state.phase === 'fight') {
+      for (const f of state.fighters) { f.energy = Math.min(ENERGY_MAX, f.energy + 15); f.ult = Math.min(ULT_MAX, f.ult + 6); }
+    }
+  }
+
   private pair(local: InputBits, remote: InputBits): [InputBits, InputBits] {
     return this.me === 0 ? [local, remote] : [remote, local];
   }
@@ -221,7 +235,7 @@ export class NetSession {
     const f = this.localFrame;
     const r = this.remoteGuess(f);
     this.predictedRemote.set(f, r);
-    sim.step(this.predicted, this.pair(this.localInputs.get(f) ?? 0, r));
+    this.simStep(this.predicted, this.pair(this.localInputs.get(f) ?? 0, r));
     this.localFrame++;
   }
 
@@ -243,7 +257,7 @@ export class NetSession {
       const r = this.remoteInputs.get(f);
       if (l === undefined || r === undefined) break;
       if (this.predictedRemote.get(f) !== r) mispredicted = true;
-      sim.step(this.confirmed, this.pair(l, r));
+      this.simStep(this.confirmed, this.pair(l, r));
       this.confirmedFrame++;
       if (this.confirmedFrame % this.hashInterval === 0) this.recordHash();
     }
@@ -321,7 +335,10 @@ export class NetSession {
   private onPacket(data: Uint8Array): void {
     const p = decodePacket(data);
     if (!p) return;
-    this.lastPacketAt = this.now();
+    const t = this.now();
+    if (this.gotPacket) this.stats.maxPacketGapMs = Math.max(this.stats.maxPacketGapMs!, t - this.lastPacketAt);
+    this.gotPacket = true;
+    this.lastPacketAt = t;
     if (p.type === 'ping') { this.link.sendUnreliable(encodePong(p.ts)); return; }
     if (p.type === 'pong') {
       const sample = this.now() - p.ts;

@@ -65,6 +65,8 @@ export interface MatchStart {
   p2: string; // guest character
   stage: string;
   inputDelay: number; // frames (2..4), chosen by host from RTT
+  /** TEST ONLY (e2e stress): both peers top up energy/ult every confirmed+predicted step so bots spam specials/ultimates. */
+  testMeter?: boolean;
 }
 
 export type WireMessage =
@@ -182,6 +184,11 @@ export interface NetStats {
   confirmedFrame: number;
   remoteFrame: number;
   localFrame: number;
+  /** Diagnostics (additive): worst tick() cost, worst rollback re-simulation cost, longest gap between received packets. */
+  maxTickMs?: number;
+  maxResimMs?: number;
+  maxPacketGapMs?: number;
+  resimFrames?: number;
 }
 
 /** Result of one fixed 60 Hz tick of the online session. */
