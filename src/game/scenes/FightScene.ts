@@ -218,10 +218,8 @@ export class FightScene extends Phaser.Scene {
   private onKey(e: KeyboardEvent) {
     if (this.ending) return;
     if (this.hudScene?.paused) {
-      if (e.code === 'Escape') this.resume();
-      else if (e.code === 'ArrowUp' || e.code === 'KeyW') this.hudScene.movePause(-1);
-      else if (e.code === 'ArrowDown' || e.code === 'KeyS') this.hudScene.movePause(1);
-      else if (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyJ') this.hudScene.confirmPause();
+      if (e.code === 'Escape' || e.code === 'Backspace') this.resume();
+      else this.hudScene.pauseKey(e);
       e.preventDefault();
       return;
     }

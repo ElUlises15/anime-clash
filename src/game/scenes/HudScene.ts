@@ -7,6 +7,8 @@ import { Hud, type HudExtra } from '../../ui/Hud';
 import type { CharacterDef } from '../../characters/types';
 import type { MatchState } from '../sim/types';
 import { GAME_W, GAME_H, type GameMode } from '../../ui/sceneData';
+import { ArcadeButton } from '../../ui/widgets';
+import { FocusNav } from '../../ui/focusNav';
 
 export const HUD_SCENE = 'FightHud';
 
@@ -16,8 +18,7 @@ export class HudScene extends Phaser.Scene {
   hud: Hud | null = null;
   private debugText: Phaser.GameObjects.Text | null = null;
   private pauseLayer: Phaser.GameObjects.Container | null = null;
-  private pauseItems: { text: Phaser.GameObjects.Text; action: () => void }[] = [];
-  private pauseIndex = 0;
+  private pauseNav: FocusNav<ArcadeButton> | null = null;
   private toastText: Phaser.GameObjects.Text | null = null;
 
   constructor() { super({ key: HUD_SCENE, active: false }); }
@@ -65,39 +66,24 @@ export class HudScene extends Phaser.Scene {
       fontFamily: 'Impact, Arial Black, sans-serif', fontSize: '86px', fontStyle: 'italic', color: '#ffffff', stroke: '#ff2e88', strokeThickness: 8,
     }).setOrigin(0.5);
     layer.add([dim, band, title]);
-    this.pauseItems = items.map((it, i) => {
-      const t = this.add.text(GAME_W / 2, 470 + i * 95, it.label, {
-        fontFamily: 'Arial Black, Impact, sans-serif', fontSize: '46px', fontStyle: 'italic', color: '#cfd6ff', stroke: '#0a0a14', strokeThickness: 6,
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-      t.on('pointerover', () => { this.pauseIndex = i; this.refreshPause(); });
-      t.on('pointerdown', () => it.action());
-      layer.add(t);
-      return { text: t, action: it.action };
-    });
-    this.pauseIndex = 0;
+    const buttons = items.map((it, i) => new ArcadeButton(this, GAME_W / 2, 470 + i * 95, it.label, it.action,
+      { w: 640, h: 72, size: 38, accent: i === 0 ? 'gold' : 'cyan' }));
+    layer.add(buttons);
+    this.pauseNav = new FocusNav(this, buttons, { keyboard: false });
     this.pauseLayer = layer;
-    this.refreshPause();
   }
 
-  movePause(d: number) {
-    if (!this.pauseLayer) return;
-    this.pauseIndex = (this.pauseIndex + d + this.pauseItems.length) % this.pauseItems.length;
-    this.refreshPause();
-  }
+  movePause(d: number) { this.pauseNav?.move(d > 0 ? 'down' : 'up'); }
 
-  confirmPause() { if (this.pauseLayer) this.pauseItems[this.pauseIndex]?.action(); }
+  /** Arrow/WASD/confirm keys forwarded by the Fight scene while paused. */
+  pauseKey(e: KeyboardEvent): boolean { return this.pauseNav?.handleKey(e) ?? false; }
+
+  confirmPause() { if (this.pauseLayer) this.pauseNav?.current?.activate(); }
 
   hidePause() {
     this.pauseLayer?.destroy(true);
+    this.pauseNav?.destroy();
+    this.pauseNav = null;
     this.pauseLayer = null;
-    this.pauseItems = [];
-  }
-
-  private refreshPause() {
-    this.pauseItems.forEach((p, i) => {
-      const on = i === this.pauseIndex;
-      p.text.setColor(on ? '#ffd23f' : '#cfd6ff').setScale(on ? 1.12 : 1);
-      p.text.setText((on ? '▶ ' : '') + p.text.text.replace(/^▶ /, ''));
-    });
   }
 }
