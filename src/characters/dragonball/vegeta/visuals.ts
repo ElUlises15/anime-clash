@@ -1,15 +1,8 @@
-// PLACEHOLDER copied from Goku — to be replaced by the render team.
-import type { CharacterVisuals } from '../../../render/rig/types';
-export const visuals: CharacterVisuals = {
- family: 'standard', heightPx: 242,
- palette: { skin:'#f7c69f',skinShade:'#cf8e72',hair:'#171d2b',hairShade:'#080d18',hairHighlight:'#354053',eyes:'#242938',top:'#f98527',topShade:'#bd431f',undershirt:'#172d58',belt:'#193b70',pants:'#ef7926',pantsShade:'#b84423',boots:'#244775',bootsShade:'#142541',wrist:'#294d86',accent:'#facc56',outline:'#151827',aura:'#ffe779' },
- hair: {locks:[[[-1,.15],[-1.95,-.75],[-1.05,-.8],[-1.85,-1.75],[-.75,-1.3],[-.85,-2.45],[-.15,-1.55],[.35,-2.75],[.65,-1.55],[1.65,-2.15],[1.2,-1.05],[2,-1.2],[1.5,-.3],[1,.25]]],bangs:[[[-1,-.8],[-.2,-.85],[-.55,.1]],[[-.2,-1],[.45,-.8],[.15,.05]],[[.4,-.8],[1,-.65],[.65,.05]]] },
- accessories: [{kind:'symbol',color:'#fff1cf'},{kind:'wristbands',color:'#294d86'}],
- forms:{ssj:{hair:{locks:[[[-1,.1],[-1.7,-1.2],[-.9,-1],[-1.1,-2.6],[-.3,-1.6],[.1,-3],[.55,-1.8],[1.1,-2.7],[1,-1.1],[1.7,-1.5],[1.2,.1]]],bangs:[[[-.9,-.8],[-.1,-.7],[-.5,0]],[[.1,-.7],[.8,-.9],[.5,0]]]},palette:{hair:'#ffe65c',hairShade:'#d99b27',hairHighlight:'#fff9bb',eyes:'#4ecbb9',aura:'#ffe66c'},aura:true}},
- animOverrides: {
-  ultimate:{keys:[{f:0,pose:{rootY:15,torso:-12,armFrontUpper:35,armFrontLower:-115,armBackUpper:-20,armBackLower:-100,face:'angry'}},{f:10,pose:{rootY:8,torso:-18,head:18,armFrontUpper:45,armFrontLower:-110,armBackUpper:25,armBackLower:-100,handFront:'palm',handBack:'palm',face:'shout'}},{f:18,pose:{rootX:15,torso:20,head:-20,armFrontUpper:-110,armFrontLower:0,armBackUpper:-105,armBackLower:0,handFront:'palm',handBack:'palm',face:'shout'}},{f:35,pose: {}}]},
-  victory:{loop:true,keys:[{f:0,pose:{armFrontUpper:-65,armFrontLower:-100,armBackUpper:15,armBackLower:-15,torso:-8,face:'smile'}},{f:40,pose:{rootY:3,armFrontUpper:-65,armFrontLower:-100,face:'smile'}}]},
-  beam:{keys:[{f:0,pose:{torso:-15,head:15,armFrontUpper:45,armFrontLower:-120,armBackUpper:30,armBackLower:-100,handFront:'palm',handBack:'palm',face:'angry'}},{f:10,pose:{rootY:7,torso:-22,armFrontUpper:50,armFrontLower:-120,armBackUpper:40,armBackLower:-100,handFront:'palm',handBack:'palm',face:'angry'}},{f:14,pose:{rootX:13,torso:18,head:-15,armFrontUpper:-85,armFrontLower:-5,armBackUpper:-100,armBackLower:5,handFront:'palm',handBack:'palm',face:'shout'}},{f:25,pose:{rootX:13,torso:18,head:-15,armFrontUpper:-85,armFrontLower:-5,armBackUpper:-100,armBackLower:5,handFront:'palm',handBack:'palm',face:'shout'}},{f:35,pose:{}}]}
- },
- vfx: {hitSpark:'#fff0ad',trail:'#68dfff',projectile:'kiBlast',beam:'kamehameha',ultimateBg:'#152756',ultimateText:'SUPER KAMEHAMEHA!!'}
-};
+import type {CharacterVisuals} from '../../../render/rig/types';
+const flame: CharacterVisuals['hair']={locks:[[[-1,.1],[-1.3,-1],[-1.1,-2.2],[-.6,-1.6],[-.65,-3.1],[-.15,-2.4],[.2,-3.5],[.55,-2.3],[1,-2.9],[1.1,-1.5],[1.4,-1.8],[1,.1],[.45,-.65],[0,-.2],[-.45,-.65]]],bangs:[[[-.95,-.9],[-.4,-.9],[0,-.35],[.4,-.9],[.95,-.9],[.7,-1.1],[-.7,-1.1]]]};
+export const visuals:CharacterVisuals={family:'heavy',heightPx:228,
+ palette:{skin:'#efbc95',skinShade:'#b87966',hair:'#101522',hairShade:'#030710',hairHighlight:'#30364a',eyes:'#202536',top:'#f1f3ed',topShade:'#adbccc',undershirt:'#192e6b',belt:'#d5ab4d',pants:'#1d347b',pantsShade:'#0c173e',boots:'#f4f6ed',bootsShade:'#bccbd9',wrist:'#f4f6ed',accent:'#e9c65f',outline:'#111625',aura:'#b46fff'},hair:flame,
+ accessories:[{kind:'shoulderPad',color:'#e9c65f',params:{armor:true}},{kind:'custom',color:'#ffffff',params:{gloves:true}}],
+ forms:{ssj:{hair:flame,palette:{hair:'#ffe664',hairShade:'#d59b23',hairHighlight:'#fff9c0',eyes:'#40cbbb',aura:'#ffe35b'},aura:true}},
+ animOverrides:{idle:{loop:true,keys:[{f:0,pose:{face:'angry',torso:-3,armFrontUpper:-25,armFrontLower:-95}},{f:30,pose:{rootY:3,face:'angry'}}]},ultimate:{keys:[{f:0,pose:{face:'angry',armFrontUpper:70,armFrontLower:-100,armBackUpper:-65,armBackLower:90}},{f:18,pose:{face:'shout',torso:12,head:-12,armFrontUpper:-85,armFrontLower:0,armBackUpper:-85,armBackLower:0,handFront:'palm',handBack:'palm'}},{f:40,pose:{face:'angry'}}]}},
+ vfx:{hitSpark:'#ead5ff',trail:'#b37cff',projectile:'kiBlastPurple',beam:'galickGun',ultimateBg:'#211036',ultimateText:'FINAL FLASH!!'}};

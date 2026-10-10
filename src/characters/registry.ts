@@ -6,8 +6,10 @@ import { deriveStats, validateDerived, validateStatPoints } from '../game/sim/ba
 import { ENERGY_MAX } from '../game/sim/types';
 import { def as goku } from './dragonball/goku';
 import { def as naruto } from './naruto/naruto';
+import { def as vegeta } from './dragonball/vegeta';
+import { def as sasuke } from './naruto/sasuke';
 
-export const CHARACTERS: CharacterDef[] = [goku, naruto];
+export const CHARACTERS: CharacterDef[] = [goku, vegeta, naruto, sasuke];
 
 const byId: Record<string, CharacterDef> = {};
 for (const c of CHARACTERS) byId[c.id] = c;

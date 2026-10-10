@@ -51,7 +51,7 @@ export const moves: CharacterDef['moves'] = {
   special1: {
     id: 'goku_ki_blast', name: 'Ki Blast', kind: 'special', anim: 'projectile',
     startup: 11, active: 2, recovery: 16, damage: 38, chip: 6, knockback: { x: 4, y: 0 }, hitstun: 17, blockstun: 12,
-    range: 900, energyCost: 110, cooldown: 50, vfx: 'kiBlast', sfx: 'kiBlast',
+    range: 900, energyCost: 100, cooldown: 46, vfx: 'kiBlast', sfx: 'kiBlast',
     abilities: [{ type: 'projectile', frame: 11, params: {
       speed: 15, life: 110, w: 40, h: 40, offsetX: 65, offsetY: 140, power: 1, visual: 'kiBlast' } }],
     description: 'Esfera de ki rápida y barata.',
