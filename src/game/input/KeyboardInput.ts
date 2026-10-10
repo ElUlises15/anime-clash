@@ -32,6 +32,8 @@ function emptySet(): SetState {
  */
 export class KeyboardInput {
   private down = new Set<string>();
+  /** Keys pressed since they were last sampled: a tap shorter than one frame still registers once. */
+  private tapped = new Set<string>();
   private sets: Record<KeySetId, SetState> = { p1keys: emptySet(), p2keys: emptySet() };
   private frame = 0;
   private advanced = false;
@@ -108,6 +110,7 @@ export class KeyboardInput {
 
   clear(): void {
     this.down.clear();
+    this.tapped.clear();
     this.sets.p1keys = emptySet();
     this.sets.p2keys = emptySet();
     resetDoubleTap(this.sets.p1keys.dt);
@@ -130,6 +133,7 @@ export class KeyboardInput {
       return;
     }
     this.down.add(code);
+    this.tapped.add(code);
   }
 
   private handleUp(e: KeyboardEvent): void {
@@ -143,6 +147,13 @@ export class KeyboardInput {
     for (const code of this.down) {
       bits |= bitsForCode(set, code);
       if (isDashModifier(set, code)) dashMod = true;
+    }
+    for (const code of this.tapped) {
+      const b = bitsForCode(set, code);
+      if (b) {
+        bits |= b;
+        this.tapped.delete(code);
+      }
     }
     st.held = bits;
     st.dashMod = dashMod;
